@@ -58,6 +58,7 @@ object FunctionNameExtractor {
     }
 
     fun extractNFunctionInfo(playerJs: String): NFunctionInfo? {
+        // Try legacy patterns first (0-3)
         for ((index, pattern) in N_FUNCTION_PATTERNS.withIndex()) {
             val match = pattern.find(playerJs)
             if (match != null) {
@@ -84,6 +85,23 @@ object FunctionNameExtractor {
                 }
             }
         }
+
+        // Pattern 5 (Feb 2026): Match exact n-transform context
+        // Matches: e=v4c[0](e),f[M[42]] - where same var used on both sides, followed by set operation
+        val exactContextPattern = Regex("""(\w)=([a-zA-Z0-9${'$'}_]+)\[0\]\(\1\),\w+\[M\[42\]\]""")
+        val exactMatch = exactContextPattern.find(playerJs)
+        if (exactMatch != null) {
+            val varName = exactMatch.groupValues[1]
+            val arrayName = exactMatch.groupValues[2]
+
+            // Verify this array exists as "var ARRAY=[FUNC]"
+            val defPattern = Regex("""var\s+${Regex.escape(arrayName)}\s*=\s*\[([a-zA-Z0-9${'$'}_]+)\]""")
+            val defMatch = defPattern.find(playerJs)
+            val funcName = defMatch?.groupValues?.get(1) ?: "unknown"
+            Timber.tag(TAG).d("N-function found with pattern 4: array=$arrayName, func=$funcName, var=$varName")
+            return NFunctionInfo(arrayName, 0)
+        }
+
         Timber.tag(TAG).e("Could not find n-transform function name")
         return null
     }
