@@ -12,14 +12,19 @@ object FunctionNameExtractor {
         val constantArgs: List<Int>? = null,
         val preprocessFunc: String? = null,
         val preprocessArgs: List<Int>? = null,
-        val isHardcoded: Boolean = false
+        val isHardcoded: Boolean = false,
+        // Full JS expression for VM-dispatch players where no named function can be extracted.
+        // "INPUT" is replaced with the sig argument at export time.
+        val jsExpression: String? = null
     )
 
     data class NFunctionInfo(
         val name: String,
         val arrayIndex: Int?,
         val constantArgs: List<Int>? = null,
-        val isHardcoded: Boolean = false
+        val isHardcoded: Boolean = false,
+        // Full JS expression for the n-transform. "INPUT" is replaced with the n value.
+        val jsExpression: String? = null
     )
 
     data class HardcodedPlayerConfig(
@@ -28,9 +33,11 @@ object FunctionNameExtractor {
         val sigConstantArgs: List<Int>? = null,
         val sigPreprocessFunc: String? = null,
         val sigPreprocessArgs: List<Int>? = null,
+        val sigJsExpression: String? = null,
         val nFuncName: String,
         val nArrayIndex: Int?,
         val nConstantArgs: List<Int>?,
+        val nJsExpression: String? = null,
         val signatureTimestamp: Int
     )
 
@@ -45,6 +52,34 @@ object FunctionNameExtractor {
             nArrayIndex = null,
             nConstantArgs = listOf(6, 6010),
             signatureTimestamp = 20522
+        ),
+        // player_ias 9c249f6f (2026-05-31): VM-dispatch via Tl/Oe/P_, no extractable function names.
+        // Sig: bzn() calls Tl(48,5831,Oe(23,6943,s)); Oe(23,6943,s)=decodeURIComponent(s) which
+        // CipherDeobfuscator already does, so WebView receives the decoded sig and calls Tl(48,5831,s).
+        // N: g.W_(url,true).get("n") returns the VM-transformed n query param.
+        // STS: extracted from player HTML as 20602.
+        // Note: when no URL pattern matches inside the player JS, extractPlayerHash falls back to
+        // MD5(first 10000 bytes). For 9c249f6f that MD5 is "a6fc27c5", so both keys are needed.
+        "9c249f6f" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Tl(48,5831,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.W_('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20602
+        ),
+        // MD5-fallback alias for the same player (no self-referencing URL inside the JS)
+        "a6fc27c5" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Tl(48,5831,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.W_('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20602
         )
     )
 
@@ -142,25 +177,33 @@ object FunctionNameExtractor {
             }
         }
 
-        Timber.tag(TAG).w("No sig pattern matched, checking for Q-array obfuscation...")
+        Timber.tag(TAG).w("No sig pattern matched, trying hardcoded config (Q-array or expression-based)...")
 
-        if (hasQArrayObfuscation(playerJs)) {
-            val hashToUse = knownHash ?: extractPlayerHash(playerJs)
-            Timber.tag(TAG).d("Using hash for hardcoded lookup: $hashToUse (knownHash=$knownHash)")
-            if (hashToUse != null) {
-                val config = getHardcodedConfig(hashToUse)
-                if (config != null) {
-                    Timber.tag(TAG).d("USING HARDCODED SIG FUNCTION: ${config.sigFuncName}(${config.sigConstantArgs}, ...)")
-                    Timber.tag(TAG).d("Sig preprocess: ${config.sigPreprocessFunc}(${config.sigPreprocessArgs}, sig)")
+        // Try hardcoded config even without Q-array (catches VM-dispatch players like 9c249f6f)
+        val hashToUse = knownHash ?: extractPlayerHash(playerJs)
+        Timber.tag(TAG).d("Using hash for hardcoded lookup: $hashToUse (knownHash=$knownHash)")
+        if (hashToUse != null) {
+            val config = getHardcodedConfig(hashToUse)
+            if (config != null) {
+                if (config.sigJsExpression != null) {
+                    Timber.tag(TAG).d("USING EXPRESSION-BASED SIG: ${config.sigJsExpression}")
                     return SigFunctionInfo(
                         name = config.sigFuncName,
-                        constantArg = config.sigConstantArg,
-                        constantArgs = config.sigConstantArgs,
-                        preprocessFunc = config.sigPreprocessFunc,
-                        preprocessArgs = config.sigPreprocessArgs,
-                        isHardcoded = true
+                        constantArg = null,
+                        isHardcoded = true,
+                        jsExpression = config.sigJsExpression
                     )
                 }
+                Timber.tag(TAG).d("USING HARDCODED SIG FUNCTION: ${config.sigFuncName}(${config.sigConstantArgs}, ...)")
+                Timber.tag(TAG).d("Sig preprocess: ${config.sigPreprocessFunc}(${config.sigPreprocessArgs}, sig)")
+                return SigFunctionInfo(
+                    name = config.sigFuncName,
+                    constantArg = config.sigConstantArg,
+                    constantArgs = config.sigConstantArgs,
+                    preprocessFunc = config.sigPreprocessFunc,
+                    preprocessArgs = config.sigPreprocessArgs,
+                    isHardcoded = true
+                )
             }
         }
 
@@ -202,18 +245,26 @@ object FunctionNameExtractor {
             }
         }
 
-        Timber.tag(TAG).w("No n-func pattern matched, checking for Q-array obfuscation...")
+        Timber.tag(TAG).w("No n-func pattern matched, trying hardcoded config...")
 
-        if (hasQArrayObfuscation(playerJs)) {
-            val hashToUse = knownHash ?: extractPlayerHash(playerJs)
-            Timber.tag(TAG).d("Using hash for hardcoded lookup: $hashToUse (knownHash=$knownHash)")
-            if (hashToUse != null) {
-                val config = getHardcodedConfig(hashToUse)
-                if (config != null) {
-                    Timber.tag(TAG).d("USING HARDCODED N-FUNCTION: ${config.nFuncName}[${config.nArrayIndex}]")
-                    Timber.tag(TAG).d("N-function constant args: ${config.nConstantArgs}")
-                    return NFunctionInfo(config.nFuncName, config.nArrayIndex, config.nConstantArgs, isHardcoded = true)
+        // Try hardcoded config even without Q-array
+        val hashToUseN = knownHash ?: extractPlayerHash(playerJs)
+        Timber.tag(TAG).d("Using hash for hardcoded lookup: $hashToUseN (knownHash=$knownHash)")
+        if (hashToUseN != null) {
+            val config = getHardcodedConfig(hashToUseN)
+            if (config != null) {
+                if (config.nJsExpression != null) {
+                    Timber.tag(TAG).d("USING EXPRESSION-BASED N-FUNCTION: ${config.nJsExpression.take(60)}")
+                    return NFunctionInfo(
+                        name = config.nFuncName,
+                        arrayIndex = null,
+                        isHardcoded = true,
+                        jsExpression = config.nJsExpression
+                    )
                 }
+                Timber.tag(TAG).d("USING HARDCODED N-FUNCTION: ${config.nFuncName}[${config.nArrayIndex}]")
+                Timber.tag(TAG).d("N-function constant args: ${config.nConstantArgs}")
+                return NFunctionInfo(config.nFuncName, config.nArrayIndex, config.nConstantArgs, isHardcoded = true)
             }
         }
 

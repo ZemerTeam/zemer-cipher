@@ -96,7 +96,14 @@ class CipherWebView private constructor(
         usingHardcodedMode = isHardcoded
 
         val exports = buildList {
-            if (sigFuncName != null) {
+            val sigJsExpr = sigInfo?.jsExpression
+            if (sigJsExpr != null) {
+                // Expression-based sig decipher (VM-dispatch players like 9c249f6f).
+                // INPUT is replaced with the sig argument.
+                val expr = sigJsExpr.replace("INPUT", "sig")
+                Timber.tag(TAG).d("Sig: expression-based export: $expr")
+                add("window._cipherSigFunc = function(sig) { try { return $expr; } catch(e) { return null; } };")
+            } else if (sigFuncName != null) {
                 val sigConstArgs = sigInfo?.constantArgs
                 val preprocessFunc = sigInfo?.preprocessFunc
                 val preprocessArgs = sigInfo?.preprocessArgs
@@ -118,7 +125,13 @@ class CipherWebView private constructor(
                     add("window._cipherSigFunc = typeof $sigFuncName !== 'undefined' ? $sigFuncName : null;")
                 }
             }
-            if (nFuncName != null) {
+            val nJsExpr = nFuncInfo?.jsExpression
+            if (nJsExpr != null) {
+                // Expression-based n-transform (VM-dispatch players).
+                val expr = nJsExpr.replace("INPUT", "n")
+                Timber.tag(TAG).d("N: expression-based export: ${expr.take(80)}")
+                add("window._nTransformFunc = function(n) { try { return $expr; } catch(e) { return n; } };")
+            } else if (nFuncName != null) {
                 val nConstArgs = nFuncInfo?.constantArgs
                 if (!nConstArgs.isNullOrEmpty()) {
                     val argsStr = nConstArgs.joinToString(", ")

@@ -123,12 +123,10 @@ object CipherDeobfuscator {
         }
         val (playerJs, hash) = result
 
-        // Extract signature function info
+        // Extract signature function info — null is OK, WebView can still be used for n-transform.
         val sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs)
-
         if (sigInfo == null) {
-            Timber.tag(TAG).e("Could not extract signature function info from player JS")
-            return null
+            Timber.tag(TAG).w("Could not extract signature function info — proceeding with n-transform only")
         }
 
         // Extract n-transform function info (for throttle avoidance / 403 fix)
@@ -137,7 +135,13 @@ object CipherDeobfuscator {
             Timber.tag(TAG).e("Could not extract n-function info from player JS (will try brute-force)")
         }
 
-        Timber.tag(TAG).d("Creating CipherWebView with sig=${sigInfo.name}, constantArg=${sigInfo.constantArg}, nFunc=${nFuncInfo?.name}[${nFuncInfo?.arrayIndex}]")
+        // Nothing useful to put in a WebView if both are null
+        if (sigInfo == null && nFuncInfo == null) {
+            Timber.tag(TAG).e("Neither sig nor n-function could be extracted — skipping WebView creation")
+            return null
+        }
+
+        Timber.tag(TAG).d("Creating CipherWebView with sig=${sigInfo?.name}, constantArg=${sigInfo?.constantArg}, nFunc=${nFuncInfo?.name}[${nFuncInfo?.arrayIndex}]")
 
         // Create WebView — n-function is exported to window if found, with brute-force fallback
         val webView = CipherWebView.create(
