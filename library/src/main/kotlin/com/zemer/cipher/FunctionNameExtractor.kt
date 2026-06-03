@@ -105,6 +105,31 @@ object FunctionNameExtractor {
             nConstantArgs = null,
             nJsExpression = "(function(n){try{var u=new g.W_('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
             signatureTimestamp = 20602
+        ),
+        // player_ias 5cabb421 (2026-06-03): TVHTML5 client, Q-array obfuscation, STS 20606.
+        // Sig: Qp(25,37,Qp(51,3416,I.s)); Qp(51,...) is decodeURIComponent so WebView gets Qp(25,37,sig).
+        // N: g.W1 URL-param trick (W1 is the URL parser class in this player).
+        // Also served as player_ias when iframe_api occasionally routes to the TV player.
+        "5cabb421" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Qp(25,37,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.W1('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20606
+        ),
+        // MD5-fallback alias for 5cabb421
+        "94f9ca52" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Qp(25,37,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.W1('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20606
         )
     )
 
