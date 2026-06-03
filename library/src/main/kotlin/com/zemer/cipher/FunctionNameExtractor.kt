@@ -80,6 +80,31 @@ object FunctionNameExtractor {
             nConstantArgs = null,
             nJsExpression = "(function(n){try{var u=new g.W_('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
             signatureTimestamp = 20602
+        ),
+        // player_ias 4f38b487 (2026-06-03): Same VM-dispatch as 9c249f6f — new hash, same Tl/Oe/W_ layout.
+        // Sig: Tl(48,5831,Oe(23,6943,q.s)); Oe decodes URI so WebView receives Tl(48,5831,sig).
+        // N: g.W_ URL-param trick identical to 9c249f6f. STS unchanged at 20602.
+        // Serves WEB, WEB_REMIX, and the player_ias fetched for TVHTML5 via iframe_api.
+        "4f38b487" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Tl(48,5831,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.W_('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20602
+        ),
+        // MD5-fallback alias for 4f38b487 (no self-referencing URL inside the JS)
+        "1215646b" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Tl(48,5831,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.W_('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20602
         )
     )
 
