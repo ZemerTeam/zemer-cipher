@@ -16,6 +16,11 @@ object PlayerJsFetcher {
 
     var proxy: Proxy? = null
 
+    /** STS of the currently cached player JS — must match what we send in API requests. */
+    @Volatile
+    var cachedSignatureTimestamp: Int? = null
+        private set
+
     private val httpClient: OkHttpClient
         get() = OkHttpClient.Builder()
             .apply { proxy?.let { proxy(it) } }
@@ -40,6 +45,10 @@ object PlayerJsFetcher {
                 val cached = readFromCache()
                 if (cached != null) {
                     Timber.tag(TAG).d("Using cached player JS (hash=${cached.second})")
+                    if (cachedSignatureTimestamp == null) {
+                        cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(cached.first)
+                        Timber.tag(TAG).d("STS from cached player: $cachedSignatureTimestamp")
+                    }
                     return@withContext cached
                 }
             }
@@ -62,6 +71,10 @@ object PlayerJsFetcher {
 
             // Cache the result
             writeToCache(hash, playerJs)
+            cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(playerJs)
+            Timber.tag(TAG).d("STS from fresh player ($hash): $cachedSignatureTimestamp")
+            cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(playerJs)
+            Timber.tag(TAG).d("STS from fresh player ($hash): $cachedSignatureTimestamp")
 
             Pair(playerJs, hash)
         } catch (e: Exception) {

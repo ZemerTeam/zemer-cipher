@@ -3,6 +3,8 @@ package com.zemer.cipher
 import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -18,13 +20,14 @@ object CipherDeobfuscator {
 
     private var cipherWebView: CipherWebView? = null
     private var currentPlayerHash: String? = null
+    // CipherWebView has single-shot continuation slots — serialize all calls
+    private val deobfuscateMutex = Mutex()
 
-    suspend fun deobfuscateStreamUrl(signatureCipher: String, videoId: String): String? {
-        return try {
+    suspend fun deobfuscateStreamUrl(signatureCipher: String, videoId: String): String? = deobfuscateMutex.withLock {
+        try {
             deobfuscateInternal(signatureCipher, videoId, isRetry = false)
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Cipher deobfuscation failed, retrying with fresh JS: ${e.message}")
-            // Invalidate cache and retry once with fresh player JS
             try {
                 PlayerJsFetcher.invalidateCache()
                 closeWebView()
