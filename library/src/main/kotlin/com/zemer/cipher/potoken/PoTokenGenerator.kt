@@ -17,7 +17,8 @@ class PoTokenGenerator {
 
     private val webPoTokenGenLock = Mutex()
     private var webPoTokenSessionId: String? = null
-    private var webPoTokenStreamingPot: String? = null
+    // poToken bound to the session (visitorData), minted once and reused across videos.
+    private var webPoTokenSessionPot: String? = null
     private var webPoTokenGenerator: PoTokenWebView? = null
 
     fun getWebClientPoToken(videoId: String, sessionId: String): PoTokenResult? {
@@ -52,7 +53,7 @@ class PoTokenGenerator {
     private suspend fun getWebClientPoToken(videoId: String, sessionId: String, forceRecreate: Boolean): PoTokenResult {
         Timber.tag(TAG).d("Web poToken requested: videoId=$videoId, sessionId=$sessionId")
 
-        val (poTokenGenerator, streamingPot, hasBeenRecreated) =
+        val (poTokenGenerator, sessionPot, hasBeenRecreated) =
             webPoTokenGenLock.withLock {
                 val shouldRecreate =
                     forceRecreate || webPoTokenGenerator == null || webPoTokenGenerator!!.isExpired || webPoTokenSessionId != sessionId
@@ -68,16 +69,17 @@ class PoTokenGenerator {
                     // create a new webPoTokenGenerator
                     webPoTokenGenerator = PoTokenWebView.getNewPoTokenGenerator(CipherDeobfuscator.appContext)
 
-                    // The streaming poToken needs to be generated exactly once before generating
-                    // any other (player) tokens.
-                    webPoTokenStreamingPot = webPoTokenGenerator!!.generatePoToken(webPoTokenSessionId!!)
-                    Timber.tag(TAG).d("Streaming poToken generated for sessionId=${webPoTokenSessionId?.take(20)}...")
+                    // The session poToken (bound to visitorData) must be generated exactly once,
+                    // before any per-video tokens. It is reused across videos and sent in the
+                    // /player request.
+                    webPoTokenSessionPot = webPoTokenGenerator!!.generatePoToken(webPoTokenSessionId!!)
+                    Timber.tag(TAG).d("Session poToken generated for sessionId=${webPoTokenSessionId?.take(20)}...")
                 }
 
-                Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreate)
+                Triple(webPoTokenGenerator!!, webPoTokenSessionPot!!, shouldRecreate)
             }
 
-        val playerPot = try {
+        val videoPot = try {
             poTokenGenerator.generatePoToken(videoId)
         } catch (throwable: Throwable) {
             if (hasBeenRecreated) {
@@ -93,8 +95,16 @@ class PoTokenGenerator {
             }
         }
 
-        Timber.tag(TAG).d("poToken generated successfully: player=${playerPot.take(20)}..., streaming=${streamingPot.take(20)}...")
+        Timber.tag(TAG).d("poToken generated successfully: session=${sessionPot.take(20)}..., video=${videoPot.take(20)}...")
 
-        return PoTokenResult(playerPot, streamingPot)
+        // Binding verified against the live CDN (tests/pot-probe.mjs): googlevideo serves only the
+        // first 1 MiB of a stream unless the URL's pot= is bound to the VIDEO ID — a visitorData-bound
+        // pot 403s on every connection past that window (the ~45s drop + seek-to-fallback bug). So the
+        // per-video token is the streamingDataPoToken (appended to the URL) and the session token is
+        // the playerRequestPoToken (sent in the /player request, which accepts the session binding).
+        return PoTokenResult(
+            playerRequestPoToken = sessionPot,
+            streamingDataPoToken = videoPot,
+        )
     }
 }
