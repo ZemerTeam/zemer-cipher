@@ -130,6 +130,56 @@ object FunctionNameExtractor {
             nConstantArgs = null,
             nJsExpression = "(function(n){try{var u=new g.W1('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
             signatureTimestamp = 20606
+        ),
+        // player_ias 9d2ef9ef (2026-06-08): VM-dispatch via v0/n7/uY. STS 20607.
+        // Sig: yi(url,sp,s) calls v0(35,4499,n7(7,5748,s)); n7(7,5748,s)=decodeURIComponent(s)
+        // (C>>2&11)==1 branch in n7 confirms it. CipherDeobfuscator already decodes so WebView gets v0(35,4499,sig).
+        // N: g.uY URL-param trick (W_/W1/W2 have 0 occurrences; uY has 17).
+        "9d2ef9ef" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "v0(35,4499,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.uY('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20607
+        ),
+        // MD5-fallback alias for 9d2ef9ef (no self-referencing URL inside the JS)
+        "6fb43da5" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "v0(35,4499,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.uY('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20607
+        ),
+        // player_ias 69e2a55d (2026-06-08): VM-dispatch via Jf/C6/iE. STS 20611.
+        // Sig: g2(url,sp,s) calls Jf(20,3699,C6(16,4986,s)); C6(16,4986,s)=decodeURIComponent(s)
+        // (P<<2&7=0 falsy → || branch fires). CipherDeobfuscator already decodes so WebView gets Jf(20,3699,sig).
+        // N: g.iE URL-param trick (W_/W1/W2 have 0 occurrences; iE confirmed in CVy n-transform function).
+        "69e2a55d" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Jf(20,3699,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.iE('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20611
+        ),
+        // MD5-fallback alias for 69e2a55d
+        "70d8066f" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "Jf(20,3699,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.iE('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20611
         )
     )
 
