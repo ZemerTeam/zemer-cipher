@@ -23,6 +23,18 @@ object CipherDeobfuscator {
     // CipherWebView has single-shot continuation slots — serialize all calls
     private val deobfuscateMutex = Mutex()
 
+    /**
+     * SignatureTimestamp of the player JS this cipher will actually decipher with, fetching
+     * (or reusing the cached) player JS if needed. API callers must send THIS value in the
+     * /player request: during A/B rollouts other sources (e.g. NewPipe's own player fetch)
+     * can land on a different player generation, and a sig minted for one player deciphered
+     * by another produces a URL the CDN 403s.
+     */
+    suspend fun signatureTimestamp(): Int? {
+        PlayerJsFetcher.getPlayerJs(forceRefresh = false) ?: return null
+        return PlayerJsFetcher.cachedSignatureTimestamp
+    }
+
     suspend fun deobfuscateStreamUrl(signatureCipher: String, videoId: String): String? = deobfuscateMutex.withLock {
         try {
             deobfuscateInternal(signatureCipher, videoId, isRetry = false)
@@ -127,13 +139,15 @@ object CipherDeobfuscator {
         val (playerJs, hash) = result
 
         // Extract signature function info — null is OK, WebView can still be used for n-transform.
-        val sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs)
+        // Pass the fetcher's URL hash so hardcoded-config lookup uses the primary key instead of
+        // falling back to the MD5-of-first-10000-bytes alias.
+        val sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs, hash)
         if (sigInfo == null) {
             Timber.tag(TAG).w("Could not extract signature function info — proceeding with n-transform only")
         }
 
         // Extract n-transform function info (for throttle avoidance / 403 fix)
-        val nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs)
+        val nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs, hash)
         if (nFuncInfo == null) {
             Timber.tag(TAG).e("Could not extract n-function info from player JS (will try brute-force)")
         }

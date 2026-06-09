@@ -73,8 +73,6 @@ object PlayerJsFetcher {
             writeToCache(hash, playerJs)
             cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(playerJs)
             Timber.tag(TAG).d("STS from fresh player ($hash): $cachedSignatureTimestamp")
-            cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(playerJs)
-            Timber.tag(TAG).d("STS from fresh player ($hash): $cachedSignatureTimestamp")
 
             Pair(playerJs, hash)
         } catch (e: Exception) {
