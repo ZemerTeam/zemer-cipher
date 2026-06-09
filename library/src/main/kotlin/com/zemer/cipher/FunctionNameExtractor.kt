@@ -209,6 +209,34 @@ object FunctionNameExtractor {
             nConstantArgs = null,
             nJsExpression = "(function(n){try{var u=new g.Yx('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
             signatureTimestamp = 20613
+        ),
+        // player_ias ce74690f (2026-06-09): VM-dispatch via $9/cV. STS 20612.
+        // URL assembler: f=new g.cV(f,!0);f.set("alr","yes");U&&(U=$9(2,6487,f3(4,1144,U)),...) — the
+        // inner f3(4,1144,.) is decodeURIComponent (CipherDeobfuscator already decodes), so WebView
+        // runs $9(2,6487,sig). N: g.cV URL-param trick (same class the .get("n") site constructs).
+        // Empirically validated against the live CDN (tests/validate-player-config.mjs): a real
+        // signatureCipher deciphered with $9(2,6487,INPUT) + g.cV returns HTTP 206, n-probe changed.
+        // Served by iframe_api as an A/B variant alongside 69e2a55d when added.
+        "ce74690f" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "\$9(2,6487,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.cV('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20612
+        ),
+        // MD5-fallback alias for ce74690f
+        "a5669e32" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "\$9(2,6487,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.cV('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20612
         )
     )
 
