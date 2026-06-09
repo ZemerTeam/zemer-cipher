@@ -180,6 +180,35 @@ object FunctionNameExtractor {
             nConstantArgs = null,
             nJsExpression = "(function(n){try{var u=new g.iE('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
             signatureTimestamp = 20611
+        ),
+        // player_ias 16ee6936 (2026-06-09): VM-dispatch via mP/Yx. STS 20613.
+        // URL assembler: P=new g.Yx(P,!0);P.set("alr","yes");K&&(K=mP(4,155,<decode>(..,K)),...) — the
+        // inner call is decodeURIComponent (CipherDeobfuscator already decodes), so WebView runs
+        // mP(4,155,sig). N: g.Yx URL-param trick (same class CVy uses for .get("n")).
+        // Empirically validated against the live CDN (tests/validate-player-config.mjs): a real
+        // signatureCipher deciphered with mP(4,155,INPUT) + g.Yx returns HTTP 206; full WEB_REMIX
+        // drain pinned to this player delivers whole songs. Served by iframe_api as an A/B variant
+        // alongside 69e2a55d (not yet the sole live player when added).
+        "16ee6936" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "mP(4,155,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.Yx('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20613
+        ),
+        // MD5-fallback alias for 16ee6936
+        "ca366632" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "mP(4,155,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.Yx('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20613
         )
     )
 
