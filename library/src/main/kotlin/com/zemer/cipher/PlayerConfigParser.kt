@@ -72,6 +72,16 @@ object PlayerConfigParser {
                 continue
             }
             val (config, aliases) = entry
+            // A key collision (an alias duplicating another entry's hash or alias, or its
+            // own primary) makes the table ambiguous — which entry wins would depend on
+            // iteration order. That is a file-level defect, not a bad entry: reject the
+            // whole file so callers keep their previous table.
+            val keys = listOf(hash) + aliases
+            val duplicate = keys.firstOrNull { it in configs }
+                ?: keys.groupingBy { it }.eachCount().entries.firstOrNull { it.value > 1 }?.key
+            if (duplicate != null) {
+                return ParseResult.Failure("duplicate hash/alias '$duplicate' (entry $hash)")
+            }
             configs[hash] = config
             for (alias in aliases) configs[alias] = config
         }

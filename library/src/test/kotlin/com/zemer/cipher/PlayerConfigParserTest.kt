@@ -60,6 +60,29 @@ class PlayerConfigParserTest {
         assertEquals(setOf("69e2a55d"), success.configs.keys)
     }
 
+    // --- key collisions: an ambiguous table must be rejected wholesale, never half-applied ---
+
+    @Test
+    fun `alias colliding with another entry's primary hash rejects the file`() {
+        assertFileRejected(
+            file("""$validEntry, "deadbeef": { "sig": "Jf(20,3699,INPUT)", "nClass": "iE", "sts": 20611, "aliases": ["16ee6936"] }""")
+        )
+    }
+
+    @Test
+    fun `alias colliding with another entry's alias rejects the file`() {
+        assertFileRejected(
+            file("""$validEntry, "deadbeef": { "sig": "Jf(20,3699,INPUT)", "nClass": "iE", "sts": 20611, "aliases": ["ca366632"] }""")
+        )
+    }
+
+    @Test
+    fun `alias equal to its own primary hash rejects the file`() {
+        assertFileRejected(
+            file(""""deadbeef": { "sig": "Jf(20,3699,INPUT)", "nClass": "iE", "sts": 20611, "aliases": ["deadbeef"] }""")
+        )
+    }
+
     // --- sig validation: nothing that could smuggle JS past the call-expression shape ---
 
     @Test
