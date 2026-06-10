@@ -53,6 +53,8 @@ dependencies {
 
     // Optional: Timber for logging (can be excluded)
     compileOnly("com.jakewharton.timber:timber:5.0.1")
+
+    testImplementation("junit:junit:4.13.2")
 }
 
 publishing {

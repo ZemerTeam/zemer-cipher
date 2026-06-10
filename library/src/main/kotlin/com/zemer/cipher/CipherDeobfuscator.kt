@@ -141,15 +141,26 @@ object CipherDeobfuscator {
         // Extract signature function info — null is OK, WebView can still be used for n-transform.
         // Pass the fetcher's URL hash so hardcoded-config lookup uses the primary key instead of
         // falling back to the MD5-of-first-10000-bytes alias.
-        val sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs, hash)
+        var sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs, hash)
         if (sigInfo == null) {
             Timber.tag(TAG).w("Could not extract signature function info — proceeding with n-transform only")
         }
 
         // Extract n-transform function info (for throttle avoidance / 403 fix)
-        val nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs, hash)
+        var nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs, hash)
         if (nFuncInfo == null) {
             Timber.tag(TAG).e("Could not extract n-function info from player JS (will try brute-force)")
+        }
+
+        // Unknown player: a rotated player_ias whose config may already be published remotely.
+        // Force a config refresh and re-extract once — this is what fixes users without an APK
+        // update, mid-session, at the exact moment playback would otherwise break.
+        if (sigInfo == null && nFuncInfo == null) {
+            Timber.tag(TAG).w("Unknown player $hash — forcing remote config refresh")
+            if (PlayerConfigStore.forceRefresh()) {
+                sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs, hash)
+                nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs, hash)
+            }
         }
 
         // Nothing useful to put in a WebView if both are null

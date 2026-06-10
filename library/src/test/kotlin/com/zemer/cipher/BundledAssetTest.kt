@@ -1,0 +1,72 @@
+package com.zemer.cipher
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.File
+
+/**
+ * Guards the real bundled asset: it must always parse cleanly and carry the full live config
+ * set — this file is also what the player-monitor greps and what devices fetch remotely, so
+ * a regression here breaks rotation handling everywhere at once.
+ */
+class BundledAssetTest {
+
+    // Gradle runs JVM unit tests with the module dir as the working dir; resolve defensively
+    // in case a runner uses the repo root instead.
+    private fun assetFile(): File {
+        val candidates = listOf(
+            File("src/main/assets/player_configs.json"),
+            File("library/src/main/assets/player_configs.json"),
+        )
+        return candidates.firstOrNull { it.exists() }
+            ?: error("player_configs.json not found from ${File(".").absolutePath}")
+    }
+
+    private val expectedStsByPrimary = mapOf(
+        "9c249f6f" to 20602,
+        "4f38b487" to 20602,
+        "5cabb421" to 20606,
+        "9d2ef9ef" to 20607,
+        "69e2a55d" to 20611,
+        "ce74690f" to 20612,
+        "16ee6936" to 20613,
+        "6b8eecd5" to 20613,
+        "445213fb" to 20613,
+        "a32660fc" to 20613,
+    )
+
+    private val expectedAliasByPrimary = mapOf(
+        "9c249f6f" to "a6fc27c5",
+        "4f38b487" to "1215646b",
+        "5cabb421" to "94f9ca52",
+        "9d2ef9ef" to "6fb43da5",
+        "69e2a55d" to "70d8066f",
+        "ce74690f" to "a5669e32",
+        "16ee6936" to "ca366632",
+        "6b8eecd5" to "6ea478fa",
+        "445213fb" to "d62bd338",
+        "a32660fc" to "e786ad71",
+    )
+
+    @Test
+    fun `bundled asset parses with no skipped entries and the full live config set`() {
+        val result = PlayerConfigParser.parse(assetFile().readText())
+        assertTrue("expected Success, got $result", result is PlayerConfigParser.ParseResult.Success)
+        val success = result as PlayerConfigParser.ParseResult.Success
+
+        assertTrue("no entry may be skipped: ${success.skippedEntries}", success.skippedEntries.isEmpty())
+        assertEquals("10 primaries + 10 aliases", 20, success.configs.size)
+
+        for ((primary, sts) in expectedStsByPrimary) {
+            val config = success.configs[primary] ?: error("missing config for $primary")
+            assertEquals("sts for $primary", sts, config.signatureTimestamp)
+            assertSame("alias must share the primary's config", config, success.configs[expectedAliasByPrimary.getValue(primary)])
+        }
+
+        // Retired pre-VM-dispatch player, dropped after live verification (never served anymore).
+        assertFalse("74edf1a3 must stay dropped", "74edf1a3" in success.configs)
+    }
+}

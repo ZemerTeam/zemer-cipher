@@ -26,5 +26,7 @@ object ZemerCipher {
         this.proxy = proxy
         this.debugLogging = debugLogging
         PlayerJsFetcher.proxy = proxy
+        PlayerConfigStore.initialize(context)
+        PlayerConfigStore.scheduleStartupRefresh()
     }
 }
