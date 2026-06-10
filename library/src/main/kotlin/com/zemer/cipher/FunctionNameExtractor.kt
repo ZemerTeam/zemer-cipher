@@ -210,6 +210,30 @@ object FunctionNameExtractor {
             nJsExpression = "(function(n){try{var u=new g.Yx('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
             signatureTimestamp = 20613
         ),
+        // player_ias 6b8eecd5 (2026-06-10): same generation as 16ee6936 under a new URL hash —
+        // identical mP/Yx layout and STS 20613 (like 4f38b487 was for 9c249f6f). Empirically
+        // validated against the live CDN (tests/validate-player-config.mjs): HTTP 206.
+        "6b8eecd5" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "mP(4,155,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.Yx('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20613
+        ),
+        // MD5-fallback alias for 6b8eecd5
+        "6ea478fa" to HardcodedPlayerConfig(
+            sigFuncName = "_expr_sig",
+            sigConstantArg = null,
+            sigJsExpression = "mP(4,155,INPUT)",
+            nFuncName = "_expr_n",
+            nArrayIndex = null,
+            nConstantArgs = null,
+            nJsExpression = "(function(n){try{var u=new g.Yx('https://x.googlevideo.com/videoplayback?n='+n,true);var t=u.get('n');return(t&&t!==n)?t:n;}catch(e){return n;}})(INPUT)",
+            signatureTimestamp = 20613
+        ),
         // player_ias ce74690f (2026-06-09): VM-dispatch via $9/cV. STS 20612.
         // URL assembler: f=new g.cV(f,!0);f.set("alr","yes");U&&(U=$9(2,6487,f3(4,1144,U)),...) — the
         // inner f3(4,1144,.) is decodeURIComponent (CipherDeobfuscator already decodes), so WebView
