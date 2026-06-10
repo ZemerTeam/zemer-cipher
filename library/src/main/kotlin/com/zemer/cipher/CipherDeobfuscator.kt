@@ -152,14 +152,17 @@ object CipherDeobfuscator {
             Timber.tag(TAG).e("Could not extract n-function info from player JS (will try brute-force)")
         }
 
-        // Unknown player: a rotated player_ias whose config may already be published remotely.
-        // Force a config refresh and re-extract once — this is what fixes users without an APK
-        // update, mid-session, at the exact moment playback would otherwise break.
-        if (sigInfo == null && nFuncInfo == null) {
-            Timber.tag(TAG).w("Unknown player $hash — forcing remote config refresh")
+        // Incomplete extraction: a rotated player_ias whose config may already be published
+        // remotely. Force a config refresh and re-extract once — this is what fixes users
+        // without an APK update, mid-session, at the exact moment playback would otherwise
+        // break. EITHER side missing triggers it: a legacy-regex false positive on one side
+        // must not block recovery of the other, and after a successful refresh both sides
+        // re-extract so a validated config replaces any heuristic guess.
+        if (sigInfo == null || nFuncInfo == null) {
+            Timber.tag(TAG).w("Incomplete extraction for player $hash (sig=${sigInfo != null}, n=${nFuncInfo != null}) — forcing remote config refresh")
             if (PlayerConfigStore.forceRefresh()) {
-                sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs, hash)
-                nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs, hash)
+                sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs, hash) ?: sigInfo
+                nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs, hash) ?: nFuncInfo
             }
         }
 

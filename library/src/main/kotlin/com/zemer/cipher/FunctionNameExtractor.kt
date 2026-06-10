@@ -122,24 +122,13 @@ object FunctionNameExtractor {
         Timber.tag(TAG).d("========== EXTRACTING SIG FUNCTION ==========")
         Timber.tag(TAG).d("Player.js size: ${playerJs.length} chars")
 
-        for ((index, pattern) in SIG_FUNCTION_PATTERNS.withIndex()) {
-            Timber.tag(TAG).v("Trying sig pattern $index: ${pattern.pattern.take(60)}...")
-            val match = pattern.find(playerJs)
-            if (match != null) {
-                val name = match.groupValues[1]
-                val constArg = if (match.groupValues.size > 2) match.groupValues[2].toIntOrNull() else null
-                Timber.tag(TAG).d("SIG FUNCTION FOUND via pattern $index:")
-                Timber.tag(TAG).d("  name=$name, constantArg=$constArg")
-                Timber.tag(TAG).d("  match context: ...${playerJs.substring(maxOf(0, match.range.first - 20), minOf(playerJs.length, match.range.last + 20))}...")
-                return SigFunctionInfo(name, constArg, isHardcoded = false)
-            }
-        }
-
-        Timber.tag(TAG).w("No sig pattern matched, trying hardcoded config (Q-array or expression-based)...")
-
-        // Try hardcoded config even without Q-array (catches VM-dispatch players like 9c249f6f)
+        // Validated config first: config entries are proven against the live CDN (HTTP 206)
+        // before they ship, while the legacy patterns below are unanchored heuristics that can
+        // false-match anywhere in the ~2 MB player JS. A heuristic must never shadow a
+        // validated config — and a false positive here must not block the unknown-player
+        // forced refresh in CipherDeobfuscator.
         val hashToUse = knownHash ?: extractPlayerHash(playerJs)
-        Timber.tag(TAG).d("Using hash for hardcoded lookup: $hashToUse (knownHash=$knownHash)")
+        Timber.tag(TAG).d("Using hash for config lookup: $hashToUse (knownHash=$knownHash)")
         if (hashToUse != null) {
             val config = getHardcodedConfig(hashToUse)
             if (config != null) {
@@ -165,6 +154,21 @@ object FunctionNameExtractor {
             }
         }
 
+        Timber.tag(TAG).w("No config for hash $hashToUse, trying legacy sig patterns...")
+
+        for ((index, pattern) in SIG_FUNCTION_PATTERNS.withIndex()) {
+            Timber.tag(TAG).v("Trying sig pattern $index: ${pattern.pattern.take(60)}...")
+            val match = pattern.find(playerJs)
+            if (match != null) {
+                val name = match.groupValues[1]
+                val constArg = if (match.groupValues.size > 2) match.groupValues[2].toIntOrNull() else null
+                Timber.tag(TAG).d("SIG FUNCTION FOUND via pattern $index:")
+                Timber.tag(TAG).d("  name=$name, constantArg=$constArg")
+                Timber.tag(TAG).d("  match context: ...${playerJs.substring(maxOf(0, match.range.first - 20), minOf(playerJs.length, match.range.last + 20))}...")
+                return SigFunctionInfo(name, constArg, isHardcoded = false)
+            }
+        }
+
         Timber.tag(TAG).e("========== SIG FUNCTION EXTRACTION FAILED ==========")
         Timber.tag(TAG).e("Could not find signature deobfuscation function name")
         return null
@@ -173,6 +177,29 @@ object FunctionNameExtractor {
     fun extractNFunctionInfo(playerJs: String, knownHash: String? = null): NFunctionInfo? {
         Timber.tag(TAG).d("========== EXTRACTING N-FUNCTION ==========")
         Timber.tag(TAG).d("Player.js size: ${playerJs.length} chars")
+
+        // Validated config first — same precedence rationale as extractSigFunctionInfo.
+        val hashToUseN = knownHash ?: extractPlayerHash(playerJs)
+        Timber.tag(TAG).d("Using hash for config lookup: $hashToUseN (knownHash=$knownHash)")
+        if (hashToUseN != null) {
+            val config = getHardcodedConfig(hashToUseN)
+            if (config != null) {
+                if (config.nJsExpression != null) {
+                    Timber.tag(TAG).d("USING EXPRESSION-BASED N-FUNCTION: ${config.nJsExpression.take(60)}")
+                    return NFunctionInfo(
+                        name = config.nFuncName,
+                        arrayIndex = null,
+                        isHardcoded = true,
+                        jsExpression = config.nJsExpression
+                    )
+                }
+                Timber.tag(TAG).d("USING HARDCODED N-FUNCTION: ${config.nFuncName}[${config.nArrayIndex}]")
+                Timber.tag(TAG).d("N-function constant args: ${config.nConstantArgs}")
+                return NFunctionInfo(config.nFuncName, config.nArrayIndex, config.nConstantArgs, isHardcoded = true)
+            }
+        }
+
+        Timber.tag(TAG).w("No config for hash $hashToUseN, trying legacy n-func patterns...")
 
         for ((index, pattern) in N_FUNCTION_PATTERNS.withIndex()) {
             Timber.tag(TAG).v("Trying n-func pattern $index: ${pattern.pattern.take(60)}...")
@@ -200,29 +227,6 @@ object FunctionNameExtractor {
                         return NFunctionInfo(name, null, isHardcoded = false)
                     }
                 }
-            }
-        }
-
-        Timber.tag(TAG).w("No n-func pattern matched, trying hardcoded config...")
-
-        // Try hardcoded config even without Q-array
-        val hashToUseN = knownHash ?: extractPlayerHash(playerJs)
-        Timber.tag(TAG).d("Using hash for hardcoded lookup: $hashToUseN (knownHash=$knownHash)")
-        if (hashToUseN != null) {
-            val config = getHardcodedConfig(hashToUseN)
-            if (config != null) {
-                if (config.nJsExpression != null) {
-                    Timber.tag(TAG).d("USING EXPRESSION-BASED N-FUNCTION: ${config.nJsExpression.take(60)}")
-                    return NFunctionInfo(
-                        name = config.nFuncName,
-                        arrayIndex = null,
-                        isHardcoded = true,
-                        jsExpression = config.nJsExpression
-                    )
-                }
-                Timber.tag(TAG).d("USING HARDCODED N-FUNCTION: ${config.nFuncName}[${config.nArrayIndex}]")
-                Timber.tag(TAG).d("N-function constant args: ${config.nConstantArgs}")
-                return NFunctionInfo(config.nFuncName, config.nArrayIndex, config.nConstantArgs, isHardcoded = true)
             }
         }
 

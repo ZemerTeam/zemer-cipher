@@ -116,6 +116,11 @@ object PlayerConfigStore {
 
     fun knownHashes(): Set<String> = mergedConfigs.keys
 
+    /** Test-only: swaps the in-memory table without touching disk, context, or network. */
+    internal fun setTableForTest(configs: Map<String, FunctionNameExtractor.HardcodedPlayerConfig>) {
+        mergedConfigs = configs
+    }
+
     /**
      * Failure-triggered refresh: called when a player-hash lookup misses. Cooldown-gated and
      * single-flight. Returns true iff the merged map actually changed (the caller only

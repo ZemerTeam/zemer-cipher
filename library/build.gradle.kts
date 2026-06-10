@@ -55,6 +55,8 @@ dependencies {
     compileOnly("com.jakewharton.timber:timber:5.0.1")
 
     testImplementation("junit:junit:4.13.2")
+    // compileOnly deps are absent at unit-test runtime; tests exercising Timber-logging code need it
+    testImplementation("com.jakewharton.timber:timber:5.0.1")
 }
 
 publishing {
