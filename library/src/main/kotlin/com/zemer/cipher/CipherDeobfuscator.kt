@@ -160,7 +160,7 @@ object CipherDeobfuscator {
         // re-extract so a validated config replaces any heuristic guess.
         if (sigInfo == null || nFuncInfo == null) {
             Timber.tag(TAG).w("Incomplete extraction for player $hash (sig=${sigInfo != null}, n=${nFuncInfo != null}) — forcing remote config refresh")
-            if (PlayerConfigStore.forceRefresh()) {
+            if (PlayerConfigStore.forceRefresh(missingHash = hash)) {
                 sigInfo = FunctionNameExtractor.extractSigFunctionInfo(playerJs, hash) ?: sigInfo
                 nFuncInfo = FunctionNameExtractor.extractNFunctionInfo(playerJs, hash) ?: nFuncInfo
             }

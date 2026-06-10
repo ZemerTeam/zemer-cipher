@@ -122,23 +122,30 @@ object PlayerConfigStore {
     }
 
     /**
-     * Failure-triggered refresh: called when a player-hash lookup misses. Cooldown-gated and
-     * single-flight. Returns true iff the merged map actually changed (the caller only
-     * retries extraction in that case).
+     * Failure-triggered refresh: called when a player-hash lookup misses. Single-flight, with
+     * the cooldown decided under the lock (a check-then-set outside it would let concurrent
+     * misses race). Returns true iff [missingHash] is now in the table — whether THIS call's
+     * fetch did the work or a concurrent/just-finished refresh already brought it in — so
+     * callers retry extraction exactly when it can succeed.
      */
-    suspend fun forceRefresh(): Boolean {
-        val now = System.currentTimeMillis()
-        if (now - lastForcedAttemptMs < FORCE_REFRESH_COOLDOWN_MS) {
-            Timber.tag(TAG).d("forceRefresh skipped (cooldown)")
-            return false
-        }
-        lastForcedAttemptMs = now
-        return withContext(Dispatchers.IO) {
-            refreshMutex.withLock {
-                val changed = fetchAndApply()
-                if (!lastAttemptReachedServer) lastForcedAttemptMs = 0L
-                changed
+    suspend fun forceRefresh(missingHash: String): Boolean = withContext(Dispatchers.IO) {
+        refreshMutex.withLock {
+            // A refresh that held the lock while we waited (startup TTL, another miss) may
+            // have just landed this config — don't burn a fetch or arm the cooldown.
+            if (mergedConfigs.containsKey(missingHash)) {
+                Timber.tag(TAG).d("forceRefresh: $missingHash arrived via concurrent refresh")
+                return@withLock true
             }
+
+            val now = System.currentTimeMillis()
+            if (now - lastForcedAttemptMs < FORCE_REFRESH_COOLDOWN_MS) {
+                Timber.tag(TAG).d("forceRefresh skipped (cooldown)")
+                return@withLock false
+            }
+            lastForcedAttemptMs = now
+            fetchAndApply()
+            if (!lastAttemptReachedServer) lastForcedAttemptMs = 0L
+            mergedConfigs.containsKey(missingHash)
         }
     }
 
