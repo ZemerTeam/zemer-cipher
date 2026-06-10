@@ -32,4 +32,12 @@ class NJsExpressionTemplateTest {
             assertEquals("nClass=$nClass", expected, PlayerConfigParser.buildNJsExpression(nClass))
         }
     }
+
+    @Test
+    fun `template matches the cross-language golden file the JS harness also pins`() {
+        // tests/player-configs.test.mjs (zemer-app) asserts nTrick("Yx") against the SAME
+        // file — if either language's template drifts, one of the two suites goes red.
+        val goldenFile = java.io.File("src/test/resources/config-parity/n-template-Yx.golden")
+        assertEquals(goldenFile.readText(), PlayerConfigParser.buildNJsExpression("Yx"))
+    }
 }
