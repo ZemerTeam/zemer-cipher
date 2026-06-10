@@ -52,7 +52,10 @@ object PlayerConfigParser {
             return ParseResult.Failure("malformed JSON: ${e.message}")
         }
 
-        val schemaVersion = (root["schemaVersion"] as? JsonPrimitive)?.content?.toIntOrNull()
+        // Non-string primitive only (like sts): a string-typed "1" must fail identically
+        // here and in the harness loader, or the two readers drift on the same file.
+        val schemaVersion = (root["schemaVersion"] as? JsonPrimitive)
+            ?.takeIf { !it.isString }?.content?.toIntOrNull()
             ?: return ParseResult.Failure("schemaVersion missing or not an int")
         if (schemaVersion <= 0) return ParseResult.Failure("schemaVersion must be positive")
         if (schemaVersion > SUPPORTED_SCHEMA_VERSION) {
