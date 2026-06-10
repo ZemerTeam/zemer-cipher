@@ -220,19 +220,37 @@ object PlayerConfigStore {
                     }
                 }
 
-                cacheFile()?.let { writeAtomic(it, body) }
-                writeMeta(response.header("ETag").orEmpty(), System.currentTimeMillis())
-
-                val merged = PlayerConfigParser.merge(bundledConfigs, remote)
-                val changed = merged != mergedConfigs
-                mergedConfigs = merged
-                Timber.tag(TAG).d("Remote configs applied (${remote.size} hashes, merged=${merged.size}, changed=$changed)")
-                return changed
+                return applyRemote(remote, body, response.header("ETag").orEmpty())
             }
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Remote config fetch failed: ${e.message} — keeping previous configs")
             return false
         }
+    }
+
+    /**
+     * Applies a validated remote table to memory FIRST, then best-effort persists the raw
+     * body + meta. A disk failure (full disk, IO error) must never discard an in-hand
+     * validated fix — losing the cache only costs a refetch on the next start, while losing
+     * the memory update costs working playback now. Returns whether the table changed.
+     */
+    internal fun applyRemote(
+        remote: Map<String, FunctionNameExtractor.HardcodedPlayerConfig>,
+        body: String,
+        etag: String,
+    ): Boolean {
+        val merged = PlayerConfigParser.merge(bundledConfigs, remote)
+        val changed = merged != mergedConfigs
+        mergedConfigs = merged
+        Timber.tag(TAG).d("Remote configs applied (${remote.size} hashes, merged=${merged.size}, changed=$changed)")
+
+        try {
+            cacheFile()?.let { writeAtomic(it, body) }
+            writeMeta(etag, System.currentTimeMillis())
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "Could not persist remote configs (kept in memory): ${e.message}")
+        }
+        return changed
     }
 
     private fun parseSource(
