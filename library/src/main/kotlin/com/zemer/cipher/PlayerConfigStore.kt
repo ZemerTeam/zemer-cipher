@@ -86,11 +86,24 @@ object PlayerConfigStore {
             Timber.tag(TAG).d("Loaded bundled configs (${bundledConfigs.size} hashes)")
         }
 
+        applyCachedOverlay()
+    }
+
+    /**
+     * Overlays the last-good cached remote copy onto the bundled table. On ANY failure to
+     * load it, the cache body AND the meta file are deleted together: an ETag surviving a
+     * corrupt/missing body would make every subsequent conditional fetch 304 without a
+     * re-download, locking the device on bundled-only configs until the remote content
+     * happens to change. (No-op deletes on a clean first run.)
+     */
+    internal fun applyCachedOverlay() {
         val cached = parseSource("cached remote copy") { cacheFile()?.takeIf { it.exists() }?.readText() }
         mergedConfigs = if (cached != null) {
             Timber.tag(TAG).d("Overlaying cached remote configs (${cached.size} hashes)")
             PlayerConfigParser.merge(bundledConfigs, cached)
         } else {
+            cacheFile()?.delete()
+            metaFile()?.delete()
             bundledConfigs
         }
     }
@@ -207,7 +220,7 @@ object PlayerConfigStore {
                     }
                 }
 
-                cacheFile()?.writeText(body)
+                cacheFile()?.let { writeAtomic(it, body) }
                 writeMeta(response.header("ETag").orEmpty(), System.currentTimeMillis())
 
                 val merged = PlayerConfigParser.merge(bundledConfigs, remote)
@@ -249,7 +262,11 @@ object PlayerConfigStore {
     private fun loadBundledJson(context: Context): String? =
         context.assets.open(ASSET_NAME).bufferedReader().use { it.readText() }
 
+    // Test seam: unit tests point this at a temp dir; production resolves from appContext.
+    internal var cacheDirForTest: File? = null
+
     private fun cacheDir(): File? {
+        cacheDirForTest?.let { return it.apply { if (!exists()) mkdirs() } }
         val context = appContext ?: return null
         return File(context.filesDir, "cipher_cache").apply { if (!exists()) mkdirs() }
     }
@@ -273,9 +290,24 @@ object PlayerConfigStore {
 
     private fun writeMeta(etag: String, lastFetchMs: Long) {
         try {
-            metaFile()?.writeText("$etag\n$lastFetchMs")
+            metaFile()?.let { writeAtomic(it, "$etag\n$lastFetchMs") }
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Could not write config meta: ${e.message}")
+        }
+    }
+
+    /**
+     * Temp-file + rename so a process death mid-write can't leave a truncated file (a
+     * corrupt cache body beside a valid ETag is exactly the 304-lock state
+     * [applyCachedOverlay] defends against).
+     */
+    internal fun writeAtomic(file: File, content: String) {
+        val tmp = File(file.parentFile, "${file.name}.tmp")
+        tmp.writeText(content)
+        if (!tmp.renameTo(file)) {
+            // renameTo can fail on some filesystems — fall back to a direct write.
+            file.writeText(content)
+            tmp.delete()
         }
     }
 }
