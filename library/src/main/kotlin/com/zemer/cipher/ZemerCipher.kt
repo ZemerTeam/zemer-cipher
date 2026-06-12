@@ -28,5 +28,6 @@ object ZemerCipher {
         PlayerJsFetcher.proxy = proxy
         PlayerConfigStore.initialize(context)
         PlayerConfigStore.scheduleStartupRefresh()
+        PlayerDatesStore.initialize(context)
     }
 }

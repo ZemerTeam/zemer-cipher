@@ -20,6 +20,14 @@ object CipherDeobfuscator {
 
     private var cipherWebView: CipherWebView? = null
     private var currentPlayerHash: String? = null
+
+    /**
+     * The `player_ias` hash last used to decipher a web stream (sig/n), or null if none yet.
+     * Diagnostic only — surfaced in the song-details sheet. Direct-URL clients
+     * (ANDROID_VR/IOS) never run the cipher, so this reflects the last *web* stream.
+     */
+    val lastUsedPlayerHash: String?
+        get() = currentPlayerHash
     // CipherWebView has single-shot continuation slots — serialize all calls
     private val deobfuscateMutex = Mutex()
 
