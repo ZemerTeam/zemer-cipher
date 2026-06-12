@@ -38,6 +38,7 @@ class BundledAssetTest {
         "a32660fc" to 20613,
         "959dabb2" to 20614,
         "bb52fe90" to 20615,
+        "1acfe3aa" to 20616,
     )
 
     private val expectedAliasByPrimary = mapOf(
@@ -53,6 +54,7 @@ class BundledAssetTest {
         "a32660fc" to "e786ad71",
         "959dabb2" to "79c1b58e",
         "bb52fe90" to "f6046ecd",
+        "1acfe3aa" to "fbcdec38",
     )
 
     @Test
@@ -62,7 +64,7 @@ class BundledAssetTest {
         val success = result as PlayerConfigParser.ParseResult.Success
 
         assertTrue("no entry may be skipped: ${success.skippedEntries}", success.skippedEntries.isEmpty())
-        assertEquals("12 primaries + 12 aliases", 24, success.configs.size)
+        assertEquals("13 primaries + 13 aliases", 26, success.configs.size)
 
         for ((primary, sts) in expectedStsByPrimary) {
             val config = success.configs[primary] ?: error("missing config for $primary")
