@@ -10,6 +10,7 @@
     "16ee6936": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["ca366632"] },
     "6b8eecd5": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["6ea478fa"] },
     "445213fb": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["d62bd338"] },
-    "a32660fc": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["e786ad71"] }
+    "a32660fc": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["e786ad71"] },
+    "959dabb2": { "sig": "IR(84,305,INPUT)", "nClass": "Ga", "sts": 20614, "aliases": ["79c1b58e"] }
   }
 }
