@@ -13,6 +13,7 @@
     "a32660fc": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["e786ad71"] },
     "959dabb2": { "sig": "IR(84,305,INPUT)", "nClass": "Ga", "sts": 20614, "aliases": ["79c1b58e"] },
     "bb52fe90": { "sig": "Ez(5,408,INPUT)", "nClass": "Oq", "sts": 20615, "aliases": ["f6046ecd"] },
-    "1acfe3aa": { "sig": "na(16,3372,INPUT)", "nClass": "dn", "sts": 20616, "aliases": ["fbcdec38"] }
+    "1acfe3aa": { "sig": "na(16,3372,INPUT)", "nClass": "dn", "sts": 20616, "aliases": ["fbcdec38"] },
+    "c7119fda": { "sig": "na(16,3372,INPUT)", "nClass": "dn", "sts": 20616, "aliases": ["bfba3b57"] }
   }
 }
