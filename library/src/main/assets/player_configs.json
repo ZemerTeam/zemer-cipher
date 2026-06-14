@@ -14,6 +14,8 @@
     "959dabb2": { "sig": "IR(84,305,INPUT)", "nClass": "Ga", "sts": 20614, "aliases": ["79c1b58e"] },
     "bb52fe90": { "sig": "Ez(5,408,INPUT)", "nClass": "Oq", "sts": 20615, "aliases": ["f6046ecd"] },
     "1acfe3aa": { "sig": "na(16,3372,INPUT)", "nClass": "dn", "sts": 20616, "aliases": ["fbcdec38"] },
-    "c7119fda": { "sig": "na(16,3372,INPUT)", "nClass": "dn", "sts": 20616, "aliases": ["bfba3b57"] }
+    "c7119fda": { "sig": "na(16,3372,INPUT)", "nClass": "dn", "sts": 20616, "aliases": ["bfba3b57"] },
+    "88c25a98": { "sig": "il(16,3372,INPUT)", "nClass": "e4", "sts": 20616, "aliases": ["62100781"] },
+    "712f0810": { "sig": "il(16,3372,INPUT)", "nClass": "e4", "sts": 20616, "aliases": ["02a03f06"] }
   }
 }
