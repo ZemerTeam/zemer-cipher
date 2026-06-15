@@ -18,6 +18,7 @@
     "88c25a98": { "sig": "il(16,3372,INPUT)", "nClass": "e4", "sts": 20616, "aliases": ["62100781"] },
     "712f0810": { "sig": "il(16,3372,INPUT)", "nClass": "e4", "sts": 20616, "aliases": ["02a03f06"] },
     "ae0b654c": { "sig": "Ge(91,8257,INPUT)", "nClass": "bK", "sts": 20618, "aliases": ["efc5f0ec"] },
-    "5beb355b": { "sig": "Ge(91,8257,INPUT)", "nClass": "bK", "sts": 20618, "aliases": ["b627b8c4"] }
+    "5beb355b": { "sig": "Ge(91,8257,INPUT)", "nClass": "bK", "sts": 20618, "aliases": ["b627b8c4"] },
+    "b16e1fcb": { "sig": "bA(6,1281,INPUT)", "nClass": "rr", "sts": 20619, "aliases": ["519ee1b2"] }
   }
 }
