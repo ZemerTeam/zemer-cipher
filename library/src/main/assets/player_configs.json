@@ -20,6 +20,8 @@
     "ae0b654c": { "sig": "Ge(91,8257,INPUT)", "nClass": "bK", "sts": 20618, "aliases": ["efc5f0ec"] },
     "5beb355b": { "sig": "Ge(91,8257,INPUT)", "nClass": "bK", "sts": 20618, "aliases": ["b627b8c4"] },
     "b16e1fcb": { "sig": "bA(6,1281,INPUT)", "nClass": "rr", "sts": 20619, "aliases": ["519ee1b2"] },
-    "b04445d4": { "sig": "bA(6,1281,INPUT)", "nClass": "rr", "sts": 20619, "aliases": ["b8dc0882"] }
+    "b04445d4": { "sig": "bA(6,1281,INPUT)", "nClass": "rr", "sts": 20619, "aliases": ["b8dc0882"] },
+    "101d8d29": { "sig": "DX(6,1281,INPUT)", "nClass": "bD", "sts": 20619, "aliases": ["d0593fc3"] },
+    "8583bbc2": { "sig": "DX(6,1281,INPUT)", "nClass": "bD", "sts": 20619, "aliases": ["cf7c7281"] }
   }
 }
