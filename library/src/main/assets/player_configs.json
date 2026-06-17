@@ -26,6 +26,7 @@
     "302f98ca": { "sig": "DX(6,1281,INPUT)", "nClass": "bD", "sts": 20619, "aliases": ["f0c9d2bf"] },
     "f291f880": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["64628ab1"] },
     "0b359740": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["c902801c"] },
-    "f0a916b1": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["9bbe161b"] }
+    "f0a916b1": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["9bbe161b"] },
+    "ac678d18": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["a6fa4805"] }
   }
 }
