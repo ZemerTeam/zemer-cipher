@@ -43,6 +43,18 @@ object CipherDeobfuscator {
         return PlayerJsFetcher.cachedSignatureTimestamp
     }
 
+    /**
+     * Best-effort: create the cipher WebView (fetch player JS + load it) ahead of first playback so
+     * the deobfuscation hot path is already warm. Guarded by the same mutex as deobfuscation, so it
+     * can't race a real request; on failure the WebView is simply created lazily on first use.
+     */
+    suspend fun prewarm() {
+        Timber.tag(TAG).d("Prewarming cipher WebView...")
+        deobfuscateMutex.withLock {
+            getOrCreateWebView(forceRefresh = false)
+        }
+    }
+
     suspend fun deobfuscateStreamUrl(signatureCipher: String, videoId: String): String? = deobfuscateMutex.withLock {
         try {
             deobfuscateInternal(signatureCipher, videoId, isRetry = false)
@@ -92,8 +104,11 @@ object CipherDeobfuscator {
      * Uses the runtime-discovered n-function from the player JS WebView.
      * Returns the URL with the transformed 'n' value, or the original URL if transform fails.
      */
-    suspend fun transformNParamInUrl(url: String): String {
-        return try {
+    suspend fun transformNParamInUrl(url: String): String = deobfuscateMutex.withLock {
+        // Hold the same mutex as deobfuscateStreamUrl/prewarm: the shared CipherWebView has
+        // single-shot continuation slots, so sig deciphering, n-transform, and warm-up must never
+        // touch it concurrently (concurrent calls would clobber each other's WebView state).
+        try {
             transformNInternal(url)
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "N-transform failed, returning original URL: ${e.message}")
