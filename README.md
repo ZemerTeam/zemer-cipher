@@ -2,6 +2,32 @@
 
 Android library for YouTube cipher deobfuscation and PoToken generation.
 
+## Origin & adoption
+
+The WebView signature-cipher / n-transform deciphering here (`CipherDeobfuscator`, `CipherWebView`,
+the injected `window._cipherSigFunc`) was **originally written by me
+([alltechdev](https://github.com/alltechdev))** — first implemented in the Zemer app on
+**2026-02-12**
+([`f905d49`](https://github.com/ZemerTeam/zemer-app/commit/f905d49da8b4486b659fa32d68e2f45f939fb56a)),
+then added to [Metrolist](https://github.com/MetrolistGroup/Metrolist) two days later on **2026-02-14**
+([`0750a63d`](https://github.com/MetrolistGroup/Metrolist/commit/0750a63d74d69082b81ae8868b06edab51fb3875)).
+This repository is that same code, extracted into a standalone Android library
+(`com.zemer:cipher`).
+
+**Remote config:** the Zemer app and Metrolist fetch `player_configs.json` from this repo's `master`
+at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations without an app update.
+
+**Code reuse:** the deciphering code has also been copied into many other projects — these bundle the
+code only and do **not** pull config updates from here. Verified examples:
+
+- [Echo-Music](https://github.com/EchoMusicApp/Echo-Music)
+- [Flow](https://github.com/A-EDev/Flow)
+- [vivi-music](https://github.com/vivizzz007/vivi-music)
+- [Kreate](https://github.com/knighthat/Kreate)
+- [Meld](https://github.com/FrancescoGrazioso/Meld)
+
+…plus dozens of other forks and derivative apps.
+
 ## Features
 
 - Signature cipher deobfuscation for YouTube streaming URLs
@@ -90,7 +116,7 @@ val result = generator.getWebClientPoToken(videoId, sessionId)
 
 ## Credits
 
-- PoToken generation patterns based on [BgUtils](https://github.com/nichobi/bgutils) (MIT License)
+- PoToken generation patterns based on [BgUtils](https://github.com/LuanRT/BgUtils) (MIT License)
 - Cipher function extraction uses standard YouTube deobfuscation techniques (as documented by yt-dlp, NewPipe, etc.)
 
 All other code (WebView implementation, runtime execution, n-parameter transform logic) is custom implementation.
