@@ -6,6 +6,9 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonObject
 
 /**
  * Guards the real bundled asset: it must always parse cleanly and carry the full live config
@@ -59,12 +62,24 @@ class BundledAssetTest {
 
     @Test
     fun `bundled asset parses with no skipped entries and the full live config set`() {
-        val result = PlayerConfigParser.parse(assetFile().readText())
+        val jsonText = assetFile().readText()
+        val result = PlayerConfigParser.parse(jsonText)
         assertTrue("expected Success, got $result", result is PlayerConfigParser.ParseResult.Success)
         val success = result as PlayerConfigParser.ParseResult.Success
 
         assertTrue("no entry may be skipped: ${success.skippedEntries}", success.skippedEntries.isEmpty())
-        assertEquals("13 primaries + 13 aliases", 26, success.configs.size)
+
+        // Derive the expected count from the file so this never goes stale as the rotation runbook
+        // adds players: every primary hash plus each of its aliases becomes a config entry (a
+        // duplicate key makes parse() fail, so in a Success every key is distinct).
+        val players = Json.parseToJsonElement(jsonText).jsonObject.getValue("players").jsonObject
+        val primaryCount = players.size
+        val aliasCount = players.values.sumOf { (it.jsonObject["aliases"] as? JsonArray)?.size ?: 0 }
+        assertEquals(
+            "every primary ($primaryCount) + alias ($aliasCount) must become a config",
+            primaryCount + aliasCount,
+            success.configs.size,
+        )
 
         for ((primary, sts) in expectedStsByPrimary) {
             val config = success.configs[primary] ?: error("missing config for $primary")
