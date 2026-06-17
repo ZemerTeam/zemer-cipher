@@ -27,6 +27,7 @@
     "f291f880": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["64628ab1"] },
     "0b359740": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["c902801c"] },
     "f0a916b1": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["9bbe161b"] },
-    "ac678d18": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["a6fa4805"] }
+    "ac678d18": { "sig": "BK(15,4053,INPUT)", "nClass": "iz", "sts": 20620, "aliases": ["a6fa4805"] },
+    "d2972ab1": { "sig": "U2(4,4595,INPUT)", "nClass": "Mh", "sts": 20621, "aliases": ["917d27d0"] }
   }
 }
