@@ -51,8 +51,35 @@ object PlayerConfigStore {
     @Volatile
     private var mergedConfigs: Map<String, FunctionNameExtractor.HardcodedPlayerConfig> = emptyMap()
 
+    // Advanced every time a remote refresh actually changes the table. The cipher records the epoch
+    // its WebView was built under and rebuilds when this advances, so a corrected config for the
+    // current player — arriving by any refresh path AFTER the WebView was built from a missing or
+    // wrong entry — takes effect on the next decipher instead of being ignored until the process is
+    // restarted. See CipherDeobfuscator.getOrCreateWebView().
+    @Volatile
+    var configEpoch: Int = 0
+        private set
+
     @Volatile
     private var lastForcedAttemptMs = 0L
+
+    // Separate from lastForcedAttemptMs so a stream-rejection refresh (which fires on any 403,
+    // including unrelated/expired-URL ones) can never arm a cooldown that blocks the unknown-hash
+    // forceRefresh self-heal, or vice versa. They still serialize on refreshMutex (single-flight).
+    @Volatile
+    private var lastRejectionAttemptMs = 0L
+
+    // The two cooldown gates read DIFFERENT stamps on purpose (see above). Routed through these
+    // functions — which forceRefresh / refreshAfterStreamRejection actually call — so a unit test
+    // can prove neither path is gated by the other's cooldown without touching the network.
+    internal fun forcedCooldownActive(now: Long) = now - lastForcedAttemptMs < FORCE_REFRESH_COOLDOWN_MS
+
+    internal fun rejectionCooldownActive(now: Long) = now - lastRejectionAttemptMs < FORCE_REFRESH_COOLDOWN_MS
+
+    // Test-only: arm a cooldown stamp without invoking the network refresh paths.
+    internal fun armForcedCooldownForTest(ms: Long) { lastForcedAttemptMs = ms }
+
+    internal fun armRejectionCooldownForTest(ms: Long) { lastRejectionAttemptMs = ms }
 
     // True when the most recent fetch got ANY HTTP response (200/304/404/...). The forced-refresh
     // cooldown only arms in that case — it exists to protect the config host from repeat hits,
@@ -151,15 +178,47 @@ object PlayerConfigStore {
             }
 
             val now = System.currentTimeMillis()
-            if (now - lastForcedAttemptMs < FORCE_REFRESH_COOLDOWN_MS) {
+            if (forcedCooldownActive(now)) {
                 Timber.tag(TAG).d("forceRefresh skipped (cooldown)")
                 return@withLock false
             }
             lastForcedAttemptMs = now
-            fetchAndApply()
-            if (!lastAttemptReachedServer) lastForcedAttemptMs = 0L
+            fetchAndApplyResetting { lastForcedAttemptMs = 0L }
             mergedConfigs.containsKey(missingHash)
         }
+    }
+
+    /**
+     * Stream-rejection refresh: a deciphered URL was rejected by the CDN (e.g. a WEB_REMIX 403),
+     * which can mean the cipher produced a wrong-but-non-throwing signature from a stale/wrong
+     * player config — a failure the [CipherDeobfuscator] exception-retry never sees. Unlike
+     * [forceRefresh], this does NOT short-circuit when the current hash is already present (the
+     * entry may be present but WRONG), so it always re-fetches; it has its OWN cooldown (so it can't
+     * starve the unknown-hash [forceRefresh] path) but shares the single-flight lock. Returns
+     * whether the table changed — when true, [configEpoch] has advanced and the cipher rebuilds.
+     */
+    suspend fun refreshAfterStreamRejection(): Boolean = withContext(Dispatchers.IO) {
+        refreshMutex.withLock {
+            val now = System.currentTimeMillis()
+            if (rejectionCooldownActive(now)) {
+                Timber.tag(TAG).d("refreshAfterStreamRejection skipped (cooldown)")
+                return@withLock false
+            }
+            lastRejectionAttemptMs = now
+            fetchAndApplyResetting { lastRejectionAttemptMs = 0L }
+        }
+    }
+
+    /**
+     * Shared fetch tail for the cooldown-gated refresh paths: fetch + apply, and on a pure network
+     * failure (the server was never reached) reset the caller's cooldown stamp so a rotation hit
+     * while briefly offline retries on the next trigger instead of waiting out the cooldown.
+     * Returns whether the table changed. Must be called with [refreshMutex] held.
+     */
+    private fun fetchAndApplyResetting(resetCooldown: () -> Unit): Boolean {
+        val changed = fetchAndApply()
+        if (!lastAttemptReachedServer) resetCooldown()
+        return changed
     }
 
     private suspend fun refreshIfStale() {
@@ -242,7 +301,8 @@ object PlayerConfigStore {
         val merged = PlayerConfigParser.merge(bundledConfigs, remote)
         val changed = merged != mergedConfigs
         mergedConfigs = merged
-        Timber.tag(TAG).d("Remote configs applied (${remote.size} hashes, merged=${merged.size}, changed=$changed)")
+        if (changed) configEpoch++
+        Timber.tag(TAG).d("Remote configs applied (${remote.size} hashes, merged=${merged.size}, changed=$changed, epoch=$configEpoch)")
 
         try {
             cacheFile()?.let { writeAtomic(it, body) }
