@@ -6,21 +6,20 @@ Android library for YouTube cipher deobfuscation and PoToken generation.
 
 The WebView signature-cipher / n-transform deciphering here (`CipherDeobfuscator`, `CipherWebView`,
 the injected `window._cipherSigFunc`) was **originally written by me
-([alltechdev](https://github.com/alltechdev))** — first implemented in the Zemer app on
+([alltechdev](https://github.com/alltechdev))** — first implemented into [`zemer-app`](https://github.com/ZemerTeam/zemer-app) on
 **2026-02-12**
 ([`f905d49`](https://github.com/ZemerTeam/zemer-app/commit/f905d49da8b4486b659fa32d68e2f45f939fb56a)),
 then added to [Metrolist](https://github.com/MetrolistGroup/Metrolist) two days later on **2026-02-14**
-([`0750a63d`](https://github.com/MetrolistGroup/Metrolist/commit/0750a63d74d69082b81ae8868b06edab51fb3875)).
+([`0750a63d`](https://github.com/MetrolistGroup/Metrolist/commit/0750a63d74d69082b81ae8868b06edab51fb3875))
 This repository is that same code, extracted into a standalone Android library
 (`com.zemer:cipher`).
 
-**Remote config:** the Zemer app and Metrolist fetch `player_configs.json` from this repo's `master`
+**Remote config:** [`zemer-app`](https://github.com/ZemerTeam/zemer-app),  [Metrolist](https://github.com/MetrolistGroup/Metrolist), and [Echo-Music](https://github.com/EchoMusicApp/Echo-Music) fetch `player_configs.json` from this repo's `master`
 at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations without an app update.
 
 **Code reuse:** the deciphering code has also been copied into many other projects — these bundle the
 code only and do **not** pull config updates from here. Verified examples:
 
-- [Echo-Music](https://github.com/EchoMusicApp/Echo-Music)
 - [Flow](https://github.com/A-EDev/Flow)
 - [vivi-music](https://github.com/vivizzz007/vivi-music)
 - [Kreate](https://github.com/knighthat/Kreate)
