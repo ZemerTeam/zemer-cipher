@@ -1,6 +1,8 @@
 package com.zemer.cipher.potoken
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
@@ -375,13 +377,24 @@ class PoTokenWebView private constructor(
         }
     }
 
-    @MainThread
     fun close() {
         if (closed) return
         closed = true
 
         scope.cancel()
 
+        // WebView methods must run on the thread that created the WebView (main), but some
+        // callers arrive on the JavaBridge thread (onJsInitializationError) — post the teardown
+        // there instead of letting it throw and leak the instance.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            destroyWebView()
+        } else {
+            Handler(Looper.getMainLooper()).post { destroyWebView() }
+        }
+    }
+
+    @MainThread
+    private fun destroyWebView() {
         // After a render-process crash some WebView methods can throw — never let teardown crash.
         runCatching {
             webView.clearHistory()
