@@ -79,6 +79,7 @@
     "5fa5b166": { "sig": "C3(15,933,INPUT)", "nClass": "WM", "sts": 20640, "aliases": ["605c82cc"] },
     "e43c0a19": { "sig": "C3(15,933,INPUT)", "nClass": "WM", "sts": 20640, "aliases": ["b889c248"] },
     "f74306f1": { "sig": "C3(15,933,INPUT)", "nClass": "WM", "sts": 20640, "aliases": ["02b9c756"] },
-    "ecd4b80a": { "sig": "C3(15,933,INPUT)", "nClass": "WM", "sts": 20640, "aliases": ["287c3986"] }
+    "ecd4b80a": { "sig": "C3(15,933,INPUT)", "nClass": "WM", "sts": 20640, "aliases": ["287c3986"] },
+    "63173e4a": { "sig": "C3(15,933,INPUT)", "nClass": "WM", "sts": 20640, "aliases": ["9a6963a1"] }
   }
 }
