@@ -72,9 +72,13 @@ object PlayerConfigStore {
     // The two cooldown gates read DIFFERENT stamps on purpose (see above). Routed through these
     // functions — which forceRefresh / refreshAfterStreamRejection actually call — so a unit test
     // can prove neither path is gated by the other's cooldown without touching the network.
-    internal fun forcedCooldownActive(now: Long) = now - lastForcedAttemptMs < FORCE_REFRESH_COOLDOWN_MS
+    // The in-range check (not a plain `< COOLDOWN`) matters: these use wall-clock time, and a
+    // backward clock adjustment (NTP correction, manual change) makes the delta negative — a
+    // plain less-than would then hold the cooldown for the entire skew duration, wedging the
+    // self-heal paths exactly while playback is broken.
+    internal fun forcedCooldownActive(now: Long) = (now - lastForcedAttemptMs) in 0 until FORCE_REFRESH_COOLDOWN_MS
 
-    internal fun rejectionCooldownActive(now: Long) = now - lastRejectionAttemptMs < FORCE_REFRESH_COOLDOWN_MS
+    internal fun rejectionCooldownActive(now: Long) = (now - lastRejectionAttemptMs) in 0 until FORCE_REFRESH_COOLDOWN_MS
 
     // Test-only: arm a cooldown stamp without invoking the network refresh paths.
     internal fun armForcedCooldownForTest(ms: Long) { lastForcedAttemptMs = ms }
@@ -223,8 +227,12 @@ object PlayerConfigStore {
 
     private suspend fun refreshIfStale() {
         val lastFetchMs = readMeta()?.second ?: 0L
-        if (System.currentTimeMillis() - lastFetchMs < REFRESH_TTL_MS) {
-            Timber.tag(TAG).d("Remote configs fresh (fetched ${System.currentTimeMillis() - lastFetchMs} ms ago)")
+        // In-range check: lastFetchMs is persisted, so a future stamp (wall clock stepped back
+        // after the write) must count as stale, not fresh — otherwise the startup refresh stays
+        // wedged across restarts until real time catches up.
+        val age = System.currentTimeMillis() - lastFetchMs
+        if (age in 0 until REFRESH_TTL_MS) {
+            Timber.tag(TAG).d("Remote configs fresh (fetched $age ms ago)")
             return
         }
         withContext(Dispatchers.IO) {

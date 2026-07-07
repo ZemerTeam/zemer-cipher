@@ -235,8 +235,21 @@ object FunctionNameExtractor {
         return null
     }
 
-    fun extractSignatureTimestamp(playerJs: String): Int? {
+    fun extractSignatureTimestamp(playerJs: String, knownHash: String? = null): Int? {
         Timber.tag(TAG).d("Extracting signatureTimestamp...")
+
+        // Validated config first — same precedence rationale as extractSigFunctionInfo: the
+        // patterns below are unanchored heuristics over ~2 MB of JS (`sts` especially can
+        // false-match), while a config entry is validated before it ships. A heuristic must
+        // never shadow a validated config.
+        val playerHash = knownHash ?: extractPlayerHash(playerJs)
+        if (playerHash != null) {
+            val config = getHardcodedConfig(playerHash)
+            if (config != null) {
+                Timber.tag(TAG).d("Using hardcoded signatureTimestamp: ${config.signatureTimestamp}")
+                return config.signatureTimestamp
+            }
+        }
 
         val patterns = listOf(
             Regex("""signatureTimestamp['":\s]+(\d+)"""),
@@ -252,15 +265,6 @@ object FunctionNameExtractor {
                     Timber.tag(TAG).d("signatureTimestamp found via pattern $index: $sts")
                     return sts
                 }
-            }
-        }
-
-        val playerHash = extractPlayerHash(playerJs)
-        if (playerHash != null) {
-            val config = getHardcodedConfig(playerHash)
-            if (config != null) {
-                Timber.tag(TAG).d("Using hardcoded signatureTimestamp: ${config.signatureTimestamp}")
-                return config.signatureTimestamp
             }
         }
 
