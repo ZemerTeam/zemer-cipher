@@ -43,6 +43,10 @@ object FunctionNameExtractor {
 
     private val Q_ARRAY_PATTERN = Regex("""var\s+Q\s*=\s*"[^"]+"\s*\.\s*split\s*\(\s*"\}"\s*\)""")
 
+    // See extractSignatureTimestamp for why these two are tried in different precedence tiers.
+    private val ANCHORED_STS_PATTERN = Regex("""signatureTimestamp['":\s]+(\d+)""")
+    private val LOOSE_STS_PATTERN = Regex("""sts['":\s]+(\d+)""")
+
     private val PLAYER_HASH_PATTERNS = listOf(
         Regex("""jsUrl['":\s]+[^"']*?/player/([a-f0-9]{8})/"""),
         Regex("""player_ias\.vflset/[^/]+/([a-f0-9]{8})/"""),
@@ -238,10 +242,18 @@ object FunctionNameExtractor {
     fun extractSignatureTimestamp(playerJs: String, knownHash: String? = null): Int? {
         Timber.tag(TAG).d("Extracting signatureTimestamp...")
 
-        // Validated config first — same precedence rationale as extractSigFunctionInfo: the
-        // patterns below are unanchored heuristics over ~2 MB of JS (`sts` especially can
-        // false-match), while a config entry is validated before it ships. A heuristic must
-        // never shadow a validated config.
+        // Precedence: (1) the anchored `signatureTimestamp` literal in the JS itself — it is
+        // the player's own embedded field and the source config sts values are copied from
+        // at authoring time, so it is immune to config typos, stale aliases, and bad remote
+        // pushes (configs' sts is NOT CDN-validated, unlike sig/n); (2) the config, for
+        // players lacking the literal; (3) the loose `sts` pattern, which can false-match
+        // anywhere in ~2 MB of JS and must never shadow the other two.
+        val anchored = ANCHORED_STS_PATTERN.find(playerJs)?.groupValues?.get(1)?.toIntOrNull()
+        if (anchored != null) {
+            Timber.tag(TAG).d("signatureTimestamp from player JS literal: $anchored")
+            return anchored
+        }
+
         val playerHash = knownHash ?: extractPlayerHash(playerJs)
         if (playerHash != null) {
             val config = getHardcodedConfig(playerHash)
@@ -251,21 +263,10 @@ object FunctionNameExtractor {
             }
         }
 
-        val patterns = listOf(
-            Regex("""signatureTimestamp['":\s]+(\d+)"""),
-            Regex("""sts['":\s]+(\d+)"""),
-            Regex(""""signatureTimestamp"\s*:\s*(\d+)""")
-        )
-
-        for ((index, pattern) in patterns.withIndex()) {
-            val match = pattern.find(playerJs)
-            if (match != null) {
-                val sts = match.groupValues[1].toIntOrNull()
-                if (sts != null) {
-                    Timber.tag(TAG).d("signatureTimestamp found via pattern $index: $sts")
-                    return sts
-                }
-            }
+        val loose = LOOSE_STS_PATTERN.find(playerJs)?.groupValues?.get(1)?.toIntOrNull()
+        if (loose != null) {
+            Timber.tag(TAG).d("signatureTimestamp via loose sts pattern: $loose")
+            return loose
         }
 
         Timber.tag(TAG).w("Could not extract signatureTimestamp")

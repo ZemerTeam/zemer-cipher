@@ -29,6 +29,12 @@ object PlayerJsFetcher {
     // Regex to extract player hash from iframe_api response
     private val PLAYER_HASH_REGEX = Regex("""\\?/s\\?/player\\?/([a-zA-Z0-9_-]+)\\?/""")
 
+    // Serializes cache mutations: getPlayerJs has UNsynchronized concurrent callers (prewarm,
+    // signatureTimestamp() outside deobfuscateMutex, the app's EjsNTransformSolver), and an
+    // unlocked writeToCache purge racing another writer's writeAtomic tmp window would delete
+    // the tmp mid-write and silently degrade to a truncating non-atomic write.
+    private val cacheWriteLock = Any()
+
     private fun getCacheDir(): File = File(CipherDeobfuscator.appContext.filesDir, "cipher_cache")
 
     private fun getCacheFile(hash: String): File = File(getCacheDir(), "player_$hash.js")
@@ -82,14 +88,16 @@ object PlayerJsFetcher {
     }
 
     fun invalidateCache() {
-        try {
-            val cacheDir = getCacheDir()
-            if (cacheDir.exists()) {
-                cacheDir.listFiles()?.forEach { it.delete() }
+        synchronized(cacheWriteLock) {
+            try {
+                val cacheDir = getCacheDir()
+                if (cacheDir.exists()) {
+                    cacheDir.listFiles()?.forEach { it.delete() }
+                }
+                Timber.tag(TAG).d("Cache invalidated")
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to invalidate cache: ${e.message}")
             }
-            Timber.tag(TAG).d("Cache invalidated")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to invalidate cache: ${e.message}")
         }
     }
 
@@ -104,12 +112,10 @@ object PlayerJsFetcher {
             val hash = hashData[0]
             val timestamp = hashData[1].toLongOrNull() ?: return null
 
-            // Check TTL. In-range check: a future timestamp (wall clock stepped back after the
-            // write) must count as expired, not fresh — otherwise a stale player is served for
-            // the whole skew duration.
-            val age = System.currentTimeMillis() - timestamp
-            if (age !in 0..CACHE_TTL_MS) {
-                Timber.tag(TAG).d("Cache expired (hash=$hash, age=$age)")
+            // Check TTL (withinWindow: a future timestamp from a backward clock step counts
+            // as expired, not fresh).
+            if (!PlayerConfigStore.withinWindow(System.currentTimeMillis(), timestamp, CACHE_TTL_MS)) {
+                Timber.tag(TAG).d("Cache expired (hash=$hash)")
                 return null
             }
 
@@ -127,18 +133,20 @@ object PlayerJsFetcher {
     }
 
     private fun writeToCache(hash: String, playerJs: String) {
-        try {
-            val cacheDir = getCacheDir()
-            // Clean old cache files
-            cacheDir.listFiles()?.filter { it.name.startsWith("player_") }?.forEach { it.delete() }
+        synchronized(cacheWriteLock) {
+            try {
+                val cacheDir = getCacheDir()
+                // Clean old cache files
+                cacheDir.listFiles()?.filter { it.name.startsWith("player_") }?.forEach { it.delete() }
 
-            // Atomic (temp + rename): a plain writeText truncates first, so process death during
-            // a same-hash force-refresh rewrite would leave a truncated player.js that
-            // readFromCache happily serves until the TTL expires.
-            PlayerConfigStore.writeAtomic(getCacheFile(hash), playerJs)
-            PlayerConfigStore.writeAtomic(getHashFile(), "$hash\n${System.currentTimeMillis()}")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Error writing cache: ${e.message}")
+                // Atomic (temp + rename): a plain writeText truncates first, so process death
+                // during a same-hash force-refresh rewrite would leave a truncated player.js
+                // that readFromCache happily serves until the TTL expires.
+                PlayerConfigStore.writeAtomic(getCacheFile(hash), playerJs)
+                PlayerConfigStore.writeAtomic(getHashFile(), "$hash\n${System.currentTimeMillis()}")
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Error writing cache: ${e.message}")
+            }
         }
     }
 

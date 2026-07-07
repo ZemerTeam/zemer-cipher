@@ -34,10 +34,35 @@ class CipherWebView private constructor(
     // carry a per-request id, echoed back by the JS bridge: a late result from a cancelled/
     // abandoned request must never resume the NEXT request's continuation with the wrong value.
     private var initContinuation: Continuation<CipherWebView>? = initContinuation
-    private var sigContinuation: Continuation<String>? = null
-    private var sigRequestId = 0
-    private var nContinuation: Continuation<String>? = null
-    private var nRequestId = 0
+    private val sigSlot = RequestSlot<String>()
+    private val nSlot = RequestSlot<String>()
+
+    /**
+     * Single-shot continuation slot with an id-checked take. arm() returns the request id the
+     * JS call must echo back; takeIfCurrent(id) ignores late callbacks from superseded
+     * requests (the stale-result guard); takeAny() is for renderer-gone/timeout paths, which
+     * must clear whatever is pending. Synchronized because JS-bridge callbacks arrive on a
+     * WebView-internal thread while onRenderProcessGone/timeouts run on the main thread.
+     * The distinct method names are deliberate: same-name overloads made dropping the id a
+     * silent, compile-clean way to reintroduce the race.
+     */
+    private class RequestSlot<T> {
+        private var continuation: Continuation<T>? = null
+        private var requestId = 0
+
+        @Synchronized
+        fun arm(cont: Continuation<T>): Int {
+            continuation = cont
+            return ++requestId
+        }
+
+        @Synchronized
+        fun takeIfCurrent(id: Int): Continuation<T>? =
+            if (id == requestId) continuation.also { continuation = null } else null
+
+        @Synchronized
+        fun takeAny(): Continuation<T>? = continuation.also { continuation = null }
+    }
 
     /**
      * Set once the WebView's renderer process has died (or an evaluate timed out, which on a
@@ -132,46 +157,16 @@ class CipherWebView private constructor(
         isDead = true
         val e = CipherRendererGoneException(reason)
         takeInitContinuation()?.resumeSafely { it.resumeWithException(e) }
-        takeSigContinuation()?.resumeSafely { it.resumeWithException(e) }
-        takeNContinuation()?.resumeSafely { it.resumeWithException(e) }
+        sigSlot.takeAny()?.resumeSafely { it.resumeWithException(e) }
+        nSlot.takeAny()?.resumeSafely { it.resumeWithException(e) }
         destroyWebView()
     }
 
-    // Single-shot takes — synchronized because JS-bridge callbacks arrive on a WebView-internal
+    // Single-shot take — synchronized because JS-bridge callbacks arrive on a WebView-internal
     // thread while onRenderProcessGone/timeouts run on the main thread.
     @Synchronized
     private fun takeInitContinuation(): Continuation<CipherWebView>? =
         initContinuation.also { initContinuation = null }
-
-    @Synchronized
-    private fun armSigContinuation(cont: Continuation<String>): Int {
-        sigContinuation = cont
-        return ++sigRequestId
-    }
-
-    @Synchronized
-    private fun armNContinuation(cont: Continuation<String>): Int {
-        nContinuation = cont
-        return ++nRequestId
-    }
-
-    /** Id-checked take: a late callback from a superseded request gets null and is ignored. */
-    @Synchronized
-    private fun takeSigContinuation(requestId: Int): Continuation<String>? =
-        if (requestId == sigRequestId) sigContinuation.also { sigContinuation = null } else null
-
-    @Synchronized
-    private fun takeNContinuation(requestId: Int): Continuation<String>? =
-        if (requestId == nRequestId) nContinuation.also { nContinuation = null } else null
-
-    // Unconditional takes for renderer-gone/timeout paths, which must clear whatever is pending.
-    @Synchronized
-    private fun takeSigContinuation(): Continuation<String>? =
-        sigContinuation.also { sigContinuation = null }
-
-    @Synchronized
-    private fun takeNContinuation(): Continuation<String>? =
-        nContinuation.also { nContinuation = null }
 
     private inline fun <T> T.resumeSafely(block: (T) -> Unit) {
         // A continuation cancelled by withTimeout may already be completed; never let that
@@ -451,7 +446,7 @@ function discoverAndInit() {
             withTimeout(EVAL_TIMEOUT_MS) {
                 withContext(Dispatchers.Main) {
                     suspendCancellableCoroutine { cont ->
-                        val requestId = armSigContinuation(cont)
+                        val requestId = sigSlot.arm(cont)
                         val constArgJs = if (sigInfo.constantArg != null) "${sigInfo.constantArg}" else "null"
                         val jsCall = "deobfuscateSig('${sigInfo.name}', $constArgJs, '${escapeJsString(obfuscatedSig)}', $requestId)"
                         Timber.tag(TAG).d("Evaluating JS: ${jsCall.take(100)}...")
@@ -472,14 +467,14 @@ function discoverAndInit() {
         Timber.tag(TAG).d("========== SIGNATURE RESULT ==========")
         Timber.tag(TAG).d("Result length: ${result.length} (requestId=$requestId)")
         Timber.tag(TAG).d("Result preview: ${result.take(50)}...")
-        takeSigContinuation(requestId)?.resumeSafely { it.resume(result) }
+        sigSlot.takeIfCurrent(requestId)?.resumeSafely { it.resume(result) }
     }
 
     @JavascriptInterface
     fun onSigError(requestId: Int, error: String) {
         Timber.tag(TAG).e("========== SIGNATURE ERROR ==========")
         Timber.tag(TAG).e("Error: $error (requestId=$requestId)")
-        takeSigContinuation(requestId)?.resumeSafely {
+        sigSlot.takeIfCurrent(requestId)?.resumeSafely {
             it.resumeWithException(CipherException("Sig deobfuscation failed: $error"))
         }
     }
@@ -500,7 +495,7 @@ function discoverAndInit() {
             withTimeout(EVAL_TIMEOUT_MS) {
                 withContext(Dispatchers.Main) {
                     suspendCancellableCoroutine { cont ->
-                        val requestId = armNContinuation(cont)
+                        val requestId = nSlot.arm(cont)
                         val jsCall = "transformN('${escapeJsString(nValue)}', $requestId)"
                         Timber.tag(TAG).d("Evaluating JS: $jsCall")
                         webView.evaluateJavascript(jsCall, null)
@@ -518,14 +513,14 @@ function discoverAndInit() {
         Timber.tag(TAG).d("========== N-TRANSFORM RESULT ==========")
         Timber.tag(TAG).d("Result: $result (requestId=$requestId)")
         Timber.tag(TAG).d("Result length: ${result.length}")
-        takeNContinuation(requestId)?.resumeSafely { it.resume(result) }
+        nSlot.takeIfCurrent(requestId)?.resumeSafely { it.resume(result) }
     }
 
     @JavascriptInterface
     fun onNError(requestId: Int, error: String) {
         Timber.tag(TAG).e("========== N-TRANSFORM ERROR ==========")
         Timber.tag(TAG).e("Error: $error (requestId=$requestId)")
-        takeNContinuation(requestId)?.resumeSafely {
+        nSlot.takeIfCurrent(requestId)?.resumeSafely {
             it.resumeWithException(CipherException("N-transform failed: $error"))
         }
     }
@@ -539,8 +534,8 @@ function discoverAndInit() {
     /** Timeout path: mark this instance dead, clear pending slots, throw renderer-gone. */
     private fun failAsRendererGone(reason: String): Nothing {
         isDead = true
-        takeSigContinuation()
-        takeNContinuation()
+        sigSlot.takeAny()
+        nSlot.takeAny()
         throw CipherRendererGoneException(reason)
     }
 
@@ -718,14 +713,11 @@ function discoverAndInit() {
                 Timber.tag(TAG).e("CipherWebView init timed out after ${CREATE_TIMEOUT_MS}ms — treating renderer as gone")
                 destroyQuietly(created)
                 throw CipherRendererGoneException("CipherWebView init timed out after ${CREATE_TIMEOUT_MS}ms")
-            } catch (e: CancellationException) {
-                // Caller cancelled — don't leak the half-initialized WebView.
-                destroyQuietly(created)
-                throw e
             } catch (e: Exception) {
-                // Init failed via an error resume (e.g. onPlayerJsError -> CipherException):
-                // destroy the half-initialized WebView too, or every failed create() leaks a
-                // live renderer process that the retry path then multiplies.
+                // Covers both caller cancellation (CancellationException is rethrown, never
+                // swallowed) and init failure via an error resume (e.g. onPlayerJsError ->
+                // CipherException): destroy the half-initialized WebView either way, or every
+                // failed create() leaks a live renderer that the retry path then multiplies.
                 destroyQuietly(created)
                 throw e
             }
