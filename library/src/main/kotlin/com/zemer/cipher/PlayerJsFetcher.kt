@@ -29,6 +29,12 @@ object PlayerJsFetcher {
     // Regex to extract player hash from iframe_api response
     private val PLAYER_HASH_REGEX = Regex("""\\?/s\\?/player\\?/([a-zA-Z0-9_-]+)\\?/""")
 
+    // Serializes cache mutations: getPlayerJs has UNsynchronized concurrent callers (prewarm,
+    // signatureTimestamp() outside deobfuscateMutex, the app's EjsNTransformSolver), and an
+    // unlocked writeToCache purge racing another writer's writeAtomic tmp window would delete
+    // the tmp mid-write and silently degrade to a truncating non-atomic write.
+    private val cacheWriteLock = Any()
+
     private fun getCacheDir(): File = File(CipherDeobfuscator.appContext.filesDir, "cipher_cache")
 
     private fun getCacheFile(hash: String): File = File(getCacheDir(), "player_$hash.js")
@@ -46,7 +52,7 @@ object PlayerJsFetcher {
                 if (cached != null) {
                     Timber.tag(TAG).d("Using cached player JS (hash=${cached.second})")
                     if (cachedSignatureTimestamp == null) {
-                        cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(cached.first)
+                        cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(cached.first, cached.second)
                         Timber.tag(TAG).d("STS from cached player: $cachedSignatureTimestamp")
                     }
                     return@withContext cached
@@ -71,7 +77,7 @@ object PlayerJsFetcher {
 
             // Cache the result
             writeToCache(hash, playerJs)
-            cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(playerJs)
+            cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(playerJs, hash)
             Timber.tag(TAG).d("STS from fresh player ($hash): $cachedSignatureTimestamp")
 
             Pair(playerJs, hash)
@@ -82,14 +88,16 @@ object PlayerJsFetcher {
     }
 
     fun invalidateCache() {
-        try {
-            val cacheDir = getCacheDir()
-            if (cacheDir.exists()) {
-                cacheDir.listFiles()?.forEach { it.delete() }
+        synchronized(cacheWriteLock) {
+            try {
+                val cacheDir = getCacheDir()
+                if (cacheDir.exists()) {
+                    cacheDir.listFiles()?.forEach { it.delete() }
+                }
+                Timber.tag(TAG).d("Cache invalidated")
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to invalidate cache: ${e.message}")
             }
-            Timber.tag(TAG).d("Cache invalidated")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to invalidate cache: ${e.message}")
         }
     }
 
@@ -104,8 +112,9 @@ object PlayerJsFetcher {
             val hash = hashData[0]
             val timestamp = hashData[1].toLongOrNull() ?: return null
 
-            // Check TTL
-            if (System.currentTimeMillis() - timestamp > CACHE_TTL_MS) {
+            // Check TTL (withinWindow: a future timestamp from a backward clock step counts
+            // as expired, not fresh).
+            if (!PlayerConfigStore.withinWindow(System.currentTimeMillis(), timestamp, CACHE_TTL_MS)) {
                 Timber.tag(TAG).d("Cache expired (hash=$hash)")
                 return null
             }
@@ -124,15 +133,20 @@ object PlayerJsFetcher {
     }
 
     private fun writeToCache(hash: String, playerJs: String) {
-        try {
-            val cacheDir = getCacheDir()
-            // Clean old cache files
-            cacheDir.listFiles()?.filter { it.name.startsWith("player_") }?.forEach { it.delete() }
+        synchronized(cacheWriteLock) {
+            try {
+                val cacheDir = getCacheDir()
+                // Clean old cache files
+                cacheDir.listFiles()?.filter { it.name.startsWith("player_") }?.forEach { it.delete() }
 
-            getCacheFile(hash).writeText(playerJs)
-            getHashFile().writeText("$hash\n${System.currentTimeMillis()}")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Error writing cache: ${e.message}")
+                // Atomic (temp + rename): a plain writeText truncates first, so process death
+                // during a same-hash force-refresh rewrite would leave a truncated player.js
+                // that readFromCache happily serves until the TTL expires.
+                PlayerConfigStore.writeAtomic(getCacheFile(hash), playerJs)
+                PlayerConfigStore.writeAtomic(getHashFile(), "$hash\n${System.currentTimeMillis()}")
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Error writing cache: ${e.message}")
+            }
         }
     }
 
@@ -142,13 +156,15 @@ object PlayerJsFetcher {
             .header("User-Agent", "Mozilla/5.0")
             .build()
 
-        val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            Timber.tag(TAG).e("iframe_api HTTP ${response.code}")
-            return null
-        }
-
-        val body = response.body?.string() ?: return null
+        // .use{} so the response is closed on the error path too (an unread body would
+        // otherwise strand its connection).
+        val body = httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                Timber.tag(TAG).e("iframe_api HTTP ${response.code}")
+                return null
+            }
+            response.body?.string()
+        } ?: return null
         val match = PLAYER_HASH_REGEX.find(body)
         return match?.groupValues?.get(1)
     }
@@ -160,12 +176,12 @@ object PlayerJsFetcher {
             .header("User-Agent", "Mozilla/5.0")
             .build()
 
-        val response = httpClient.newCall(request).execute()
-        if (!response.isSuccessful) {
-            Timber.tag(TAG).e("player JS download HTTP ${response.code}")
-            return null
+        return httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                Timber.tag(TAG).e("player JS download HTTP ${response.code}")
+                return null
+            }
+            response.body?.string()
         }
-
-        return response.body?.string()
     }
 }
