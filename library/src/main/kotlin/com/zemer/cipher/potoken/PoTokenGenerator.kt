@@ -3,10 +3,12 @@ package com.zemer.cipher.potoken
 import android.webkit.CookieManager
 import com.zemer.cipher.CipherDeobfuscator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 
 class PoTokenGenerator {
@@ -30,8 +32,33 @@ class PoTokenGenerator {
         }
 
         return try {
-            Timber.tag(TAG).d("Calling runBlocking to generate poToken...")
-            runBlocking { getWebClientPoToken(videoId, sessionId, forceRecreate = false) }
+            Timber.tag(TAG).d("Calling runBlocking to generate poToken (timeout=${POTOKEN_TIMEOUT_MS}ms)...")
+            runBlocking {
+                withTimeout(POTOKEN_TIMEOUT_MS) {
+                    getWebClientPoToken(videoId, sessionId, forceRecreate = false)
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            // The WebView's sandboxed process can be culled by the OS (storage pressure, low
+            // memory, etc.) which leaves the PoToken WebView call hung indefinitely. Cap it so
+            // stream resolution can fall through to non-PoToken fallback clients instead of
+            // blocking the entire playback path on the 45s init timeout.
+            Timber.tag(TAG).w("poToken generation timed out after ${POTOKEN_TIMEOUT_MS}ms; proceeding without PoToken")
+            runBlocking {
+                webPoTokenGenLock.withLock {
+                    try {
+                        withContext(Dispatchers.Main) {
+                            webPoTokenGenerator?.close()
+                        }
+                    } catch (closeEx: Exception) {
+                        Timber.tag(TAG).e(closeEx, "Exception closing PoTokenWebView during timeout cleanup")
+                    }
+                    webPoTokenGenerator = null
+                    webPoTokenSessionPot = null
+                    webPoTokenSessionId = null
+                }
+            }
+            null
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "poToken generation exception: ${e.javaClass.simpleName}: ${e.message}")
             when (e) {
@@ -43,6 +70,13 @@ class PoTokenGenerator {
                 else -> throw e // includes PoTokenException
             }
         }
+    }
+
+    private companion object {
+        // Healthy cold-start (WebView spin-up + botguard JS + token gen) is ~2–5s in practice;
+        // 8s leaves slack for a slow device without making the user wait too long before the
+        // fallback chain takes over when the WebView hangs. Warm-path mints are sub-second.
+        const val POTOKEN_TIMEOUT_MS = 8_000L
     }
 
     /**

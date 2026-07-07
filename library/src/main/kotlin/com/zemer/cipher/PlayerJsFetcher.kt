@@ -6,7 +6,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
-import java.net.Proxy
 
 object PlayerJsFetcher {
     private const val TAG = "Zemer_CipherFetcher"
@@ -14,17 +13,14 @@ object PlayerJsFetcher {
     private const val PLAYER_JS_URL_TEMPLATE = "https://www.youtube.com/s/player/%s/player_ias.vflset/en_GB/base.js"
     private const val CACHE_TTL_MS = 6 * 60 * 60 * 1000L // 6 hours
 
-    var proxy: Proxy? = null
-
     /** STS of the currently cached player JS — must match what we send in API requests. */
     @Volatile
     var cachedSignatureTimestamp: Int? = null
         private set
 
+    // One shared client for the whole library — see ZemerCipher.httpClient.
     private val httpClient: OkHttpClient
-        get() = OkHttpClient.Builder()
-            .apply { proxy?.let { proxy(it) } }
-            .build()
+        get() = ZemerCipher.httpClient
 
     // Regex to extract player hash from iframe_api response
     private val PLAYER_HASH_REGEX = Regex("""\\?/s\\?/player\\?/([a-zA-Z0-9_-]+)\\?/""")
@@ -92,7 +88,13 @@ object PlayerJsFetcher {
             try {
                 val cacheDir = getCacheDir()
                 if (cacheDir.exists()) {
-                    cacheDir.listFiles()?.forEach { it.delete() }
+                    // Only the player-JS cache (player_*.js + current_hash.txt) belongs to this
+                    // fetcher. The dir is shared with PlayerConfigStore (configs_remote.json/
+                    // .meta) — do NOT wipe those, or every decipher retry destroys the config
+                    // ETag and forces a full non-conditional re-download of the config file.
+                    cacheDir.listFiles()
+                        ?.filter { it.name.startsWith("player_") || it.name == "current_hash.txt" }
+                        ?.forEach { it.delete() }
                 }
                 Timber.tag(TAG).d("Cache invalidated")
             } catch (e: Exception) {

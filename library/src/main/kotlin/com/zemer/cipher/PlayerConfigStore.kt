@@ -35,10 +35,10 @@ object PlayerConfigStore {
     // and remotely doesn't turn every song into a GitHub request.
     private const val FORCE_REFRESH_COOLDOWN_MS = 5 * 60 * 1000L
 
-    // Note: names must not start with "player_" — PlayerJsFetcher.writeToCache() purges
-    // "player_*" from this shared dir on every player-JS refresh (and invalidateCache()
-    // wipes it entirely; that is benign — the in-memory map survives and the next refresh
-    // refetches without an ETag).
+    // Note: names must not start with "player_" — PlayerJsFetcher.writeToCache() and
+    // invalidateCache() purge the player-JS files (player_* + current_hash.txt) from this
+    // shared dir; these config files are deliberately spared so the ETag survives decipher
+    // retries.
     private const val CACHE_FILE = "configs_remote.json"
     private const val META_FILE = "configs_remote.meta"
 
@@ -101,10 +101,9 @@ object PlayerConfigStore {
     private val refreshMutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // One shared client for the whole library — see ZemerCipher.httpClient.
     private val httpClient: OkHttpClient
-        get() = OkHttpClient.Builder()
-            .apply { PlayerJsFetcher.proxy?.let { proxy(it) } }
-            .build()
+        get() = ZemerCipher.httpClient
 
     /**
      * Synchronous: loads the bundled asset and, if present and valid, the last-good cached

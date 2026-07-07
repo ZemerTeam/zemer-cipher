@@ -453,10 +453,9 @@ class PoTokenWebView private constructor(
         // A live renderer mints a poToken in well under a second.
         private const val GENERATE_TIMEOUT_MS = 15_000L
 
+        // One shared client for the whole library — see ZemerCipher.httpClient.
         private val httpClient: OkHttpClient
-            get() = OkHttpClient.Builder()
-                .apply { ZemerCipher.proxy?.let { proxy(it) } }
-                .build()
+            get() = ZemerCipher.httpClient
 
         suspend fun getNewPoTokenGenerator(context: Context): PoTokenWebView {
             var created: PoTokenWebView? = null
