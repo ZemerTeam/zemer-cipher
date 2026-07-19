@@ -21,7 +21,6 @@ at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations witho
 code only and do **not** pull config updates from here. Verified examples:
 
 - [Flow](https://github.com/A-EDev/Flow)
-- [vivi-music](https://github.com/vivizzz007/vivi-music)
 - [Kreate](https://github.com/knighthat/Kreate)
 - [Meld](https://github.com/FrancescoGrazioso/Meld)
 
