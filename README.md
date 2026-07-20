@@ -14,8 +14,11 @@ then added to [Metrolist](https://github.com/MetrolistGroup/Metrolist) two days 
 This repository is that same code, extracted into a standalone Android library
 (`com.zemer:cipher`).
 
-**Remote config:** [`zemer-app`](https://github.com/ZemerTeam/zemer-app),  [Metrolist](https://github.com/MetrolistGroup/Metrolist), and [Echo-Music](https://github.com/EchoMusicApp/Echo-Music) fetch `player_configs.json` from this repo's `master`
-at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations without an app update.
+**Remote config:** [`zemer-app`](https://github.com/ZemerTeam/zemer-app) fetches `player_configs.json`
+from this repo's `master` at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations
+without an app update. [Metrolist](https://github.com/MetrolistGroup/Metrolist) and
+[Echo-Music](https://github.com/EchoMusicApp/Echo-Music) ship the same configs, mirrored into their
+own repos rather than fetched from here.
 
 **Code reuse:** the deciphering code has also been copied into many other projects — these bundle the
 code only and do **not** pull config updates from here. Verified examples:
