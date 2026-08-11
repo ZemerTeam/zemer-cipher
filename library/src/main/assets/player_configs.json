@@ -231,6 +231,7 @@
     "8d2a370b": { "sig": "P_(5,4885,INPUT)", "nClass": "ti", "sts": 20672, "aliases": ["abf24eb6"] },
     "28b37ef2": { "sig": "P_(5,4885,INPUT)", "nClass": "ti", "sts": 20672, "aliases": ["66ee5cc2"] },
     "03572262": { "sig": "P_(5,4885,INPUT)", "nClass": "ti", "sts": 20672, "aliases": ["98b14bc0"] },
-    "d59a879c": { "sig": "P_(5,4885,INPUT)", "nClass": "ti", "sts": 20672, "aliases": ["c98e4bf5"] }
+    "d59a879c": { "sig": "P_(5,4885,INPUT)", "nClass": "ti", "sts": 20672, "aliases": ["c98e4bf5"] },
+    "3c1318b4": { "sig": "P_(5,4885,INPUT)", "nClass": "ti", "sts": 20672, "aliases": ["f118316b"] }
   }
 }
