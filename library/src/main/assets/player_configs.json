@@ -243,6 +243,7 @@
     "56f45058": { "sig": "EP(3,4223,INPUT)", "nClass": "eg", "sts": 20676, "aliases": ["bf52c88d"] },
     "ef8452cf": { "sig": "EP(3,4223,INPUT)", "nClass": "eg", "sts": 20676, "aliases": ["9c22ed27"] },
     "b0d2d49a": { "sig": "EP(3,4223,INPUT)", "nClass": "eg", "sts": 20676, "aliases": ["6fd8f6f9"] },
-    "5b3f454c": { "sig": "JM(3,4223,INPUT)", "nClass": "Nc", "sts": 20676, "aliases": ["84487573"] }
+    "5b3f454c": { "sig": "JM(3,4223,INPUT)", "nClass": "Nc", "sts": 20676, "aliases": ["84487573"] },
+    "0ffea8e4": { "sig": "h4(26,6906,INPUT)", "nClass": "He", "sts": 20677, "aliases": ["68c1c685"] }
   }
 }
