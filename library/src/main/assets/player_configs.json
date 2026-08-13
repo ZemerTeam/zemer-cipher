@@ -251,6 +251,7 @@
     "627778fa": { "sig": "nx(26,6906,INPUT)", "nClass": "U$", "sts": 20677, "aliases": ["cb835b53"] },
     "03d0c0e0": { "sig": "nx(26,6906,INPUT)", "nClass": "U$", "sts": 20677, "aliases": ["787cac18"] },
     "1812d523": { "sig": "FJ(26,6906,INPUT)", "nClass": "kw", "sts": 20677, "aliases": ["3a5b267d"] },
-    "65f75815": { "sig": "bz(1,8417,INPUT)", "nClass": "c$", "sts": 20678, "aliases": ["9371b9c6"] }
+    "65f75815": { "sig": "bz(1,8417,INPUT)", "nClass": "c$", "sts": 20678, "aliases": ["9371b9c6"] },
+    "8312f9a8": { "sig": "bz(1,8417,INPUT)", "nClass": "c$", "sts": 20678, "aliases": ["a13964e3"] }
   }
 }
