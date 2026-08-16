@@ -118,8 +118,17 @@ object StreamClientStore {
         }
 
         applyCachedOverlay()
-        // Meta survives only beside a valid cache body (applyCachedOverlay deletes them together),
-        // so a surviving stamp is a truthful last-sync time for the table now active.
+        seedLastSyncedFromMeta()
+    }
+
+    /**
+     * Seeds [lastSyncedMs] from the persisted meta. MUST run AFTER [applyCachedOverlay]: the
+     * overlay deletes the meta whenever it drops the cache (stale/corrupt/invalid), so only then
+     * is a surviving stamp a truthful last-sync time for the table that is actually active.
+     * Reading it BEFORE the overlay would report "updated 20 days ago" while running the bundled
+     * table — the exact lie the staleness cap exists to prevent.
+     */
+    internal fun seedLastSyncedFromMeta() {
         lastSyncedMs = readMeta()?.second ?: 0L
     }
 
@@ -224,8 +233,10 @@ object StreamClientStore {
             ZemerCipher.httpClient.newCall(request).execute().use { response ->
                 lastAttemptReachedServer = true
                 if (response.code == 304) {
+                    // 304 == the active table still matches the deploy channel: a successful sync.
                     Timber.tag(TAG).d("Remote stream clients unchanged (304)")
-                    writeMeta(etag.orEmpty(), System.currentTimeMillis())
+                    lastSyncedMs = System.currentTimeMillis()
+                    writeMeta(etag.orEmpty(), lastSyncedMs)
                     return false
                 }
                 if (!response.isSuccessful) {
@@ -273,11 +284,15 @@ object StreamClientStore {
         val changed = remote != activeConfig
         activeConfig = remote
         if (changed) configEpoch++
+        // Memory first, disk best-effort: a sync HAPPENED, so stamp it even if the cache write
+        // below throws (full disk) — otherwise the UI would report "never synced" right after a
+        // fetch that just fixed playback.
+        lastSyncedMs = System.currentTimeMillis()
         Timber.tag(TAG).d("Remote stream clients applied (${remote.clients.size} entries, changed=$changed, epoch=$configEpoch)")
 
         try {
             cacheFile()?.let { PlayerConfigStore.writeAtomic(it, body) }
-            writeMeta(etag, System.currentTimeMillis())
+            writeMeta(etag, lastSyncedMs)
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Could not persist remote stream clients (kept in memory): ${e.message}")
         }
@@ -332,7 +347,6 @@ object StreamClientStore {
     }
 
     private fun writeMeta(etag: String, lastFetchMs: Long) {
-        lastSyncedMs = lastFetchMs
         try {
             metaFile()?.let { PlayerConfigStore.writeAtomic(it, "$etag\n$lastFetchMs") }
         } catch (e: Exception) {

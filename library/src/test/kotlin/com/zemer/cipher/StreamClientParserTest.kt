@@ -167,6 +167,37 @@ class StreamClientParserTest {
     }
 
     @Test
+    fun `explicit JSON null means absent, matching the harness loader`() {
+        // kotlinx returns JsonNull (not null) for an explicit null, so without the JsonNull check
+        // these entries would be SKIPPED on devices while the pre-push gate accepted the file —
+        // a silent device/harness divergence that would ship a table devices refuse.
+        val config = success(
+            file(
+                entry(extra = """, "osName": null, "deviceMake": null, "loginSupported": null"""),
+                entry("SECOND", "SECOND", "direct", extra = """, "androidSdkVersion": null, "enabled": null"""),
+            )
+        )
+        assertEquals(listOf("WEB_REMIX", "SECOND"), config.clients.map { it.key })
+        assertNull(config.clients[0].osName)
+        assertNull(config.clients[0].deviceMake)
+        assertTrue(!config.clients[0].loginSupported)
+        assertNull(config.clients[1].androidSdkVersion)
+    }
+
+    @Test
+    fun `a chain longer than MAX_CLIENTS rejects the file`() {
+        val many = (0..StreamClientParser.MAX_CLIENTS)
+            .map { entry("K" + it, "K" + it, "direct") }
+            .toTypedArray()
+        assertTrue(failure(file(*many)).contains("too many"))
+        // Exactly at the cap is fine.
+        val atCap = (1..StreamClientParser.MAX_CLIENTS)
+            .map { entry("K" + it, "K" + it, "direct") }
+            .toTypedArray()
+        assertEquals(StreamClientParser.MAX_CLIENTS, success(file(*atCap)).clients.size)
+    }
+
+    @Test
     fun `header-unsafe and malformed fields skip the entry`() {
         val cases = listOf(
             // CR/LF in the UA (header injection).

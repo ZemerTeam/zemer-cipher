@@ -153,6 +153,27 @@ class StreamClientStoreTest {
     }
 
     @Test
+    fun `the sync stamp is seeded only from a meta that survived the overlay`() {
+        // A stale cache is dropped WITH its meta, so the seed (which runs after the overlay in
+        // initialize) must report "never synced" rather than a stamp describing a table that is
+        // no longer active.
+        cacheBody().writeText(remoteJson)
+        cacheMeta().writeText("\"etag\"\n${System.currentTimeMillis() - 15L * 24 * 60 * 60 * 1000}")
+        StreamClientStore.setLastSyncedForTest(9_999L)
+        StreamClientStore.applyCachedOverlay()
+        StreamClientStore.seedLastSyncedFromMeta()
+        assertEquals(0L, StreamClientStore.lastSyncedMs)
+
+        // A fresh cache keeps its meta, so the seed reports that sync.
+        val fresh = System.currentTimeMillis()
+        cacheBody().writeText(remoteJson)
+        cacheMeta().writeText("\"etag\"\n$fresh")
+        StreamClientStore.applyCachedOverlay()
+        StreamClientStore.seedLastSyncedFromMeta()
+        assertEquals(fresh, StreamClientStore.lastSyncedMs)
+    }
+
+    @Test
     fun `failure cooldown holds inside the window and expires after it`() {
         val now = 1_000_000L
         StreamClientStore.armFailureCooldownForTest(now)

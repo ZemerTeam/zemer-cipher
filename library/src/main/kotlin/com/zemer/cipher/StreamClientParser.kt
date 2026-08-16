@@ -1,6 +1,7 @@
 package com.zemer.cipher
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -24,6 +25,15 @@ import kotlinx.serialization.json.jsonArray
  */
 object StreamClientParser {
     const val SUPPORTED_SCHEMA_VERSION = 1
+
+    /**
+     * Upper bound on chain length. Every other value in the schema is bounded; this one's cost is
+     * live NETWORK round-trips — the resolver issues one /player request per client before giving
+     * up, so a runaway file (a generator loop, a duplicated block, a merge accident) would stall
+     * playback for tens of seconds and hammer YouTube. Rejected file-level: a table this long is
+     * never intentional.
+     */
+    const val MAX_CLIENTS = 32
 
     private val KEY_RE = Regex("""^[A-Z0-9_]{1,32}$""")
     private val CLIENT_ID_RE = Regex("""^[0-9]{1,4}$""")
@@ -155,6 +165,9 @@ object StreamClientParser {
         if (clients.isEmpty()) {
             return ParseResult.Failure("no usable client entries (never-zero-clients invariant)")
         }
+        if (clients.size > MAX_CLIENTS) {
+            return ParseResult.Failure("too many client entries (${clients.size} > $MAX_CLIENTS)")
+        }
 
         return ParseResult.Success(
             StreamClientConfig(clients = clients, families = parseFamilies(root)),
@@ -170,7 +183,7 @@ object StreamClientParser {
         // stay in the file. Anything but a strict boolean false (absent, true) keeps it live;
         // a non-boolean `enabled` is a malformed entry and skips too.
         when (val enabled = obj["enabled"]) {
-            null -> Unit
+            null, JsonNull -> Unit
             else -> {
                 val prim = (enabled as? JsonPrimitive)?.takeIf { !it.isString } ?: return null
                 when (prim.content) {
@@ -250,14 +263,21 @@ object StreamClientParser {
     private class Optional(val value: String?)
 
     private fun optionalString(obj: JsonObject, field: String, valid: (String) -> Boolean): Optional? {
-        val element = obj[field] ?: return Optional(null)
+        // An explicit JSON null means "absent" (the JSON convention, and what the harness loader
+        // does): kotlinx returns JsonNull here, NOT null, so without this check `"osName": null`
+        // would skip the entry on devices while the pre-push gate accepted it — a silent
+        // device/harness divergence.
+        val element = obj[field]
+        if (element == null || element is JsonNull) return Optional(null)
         val value = (element as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
         return if (valid(value)) Optional(value) else null
     }
 
     /** Strict boolean; absent = false; a non-boolean value invalidates the entry. */
     private fun boolean(obj: JsonObject, field: String): Boolean? {
-        val element = obj[field] ?: return false
+        // Explicit null == absent == false (see optionalString).
+        val element = obj[field]
+        if (element == null || element is JsonNull) return false
         val prim = (element as? JsonPrimitive)?.takeIf { !it.isString } ?: return null
         return when (prim.content) {
             "true" -> true
