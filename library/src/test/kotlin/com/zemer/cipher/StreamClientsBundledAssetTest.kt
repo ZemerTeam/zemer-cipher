@@ -38,7 +38,7 @@ class StreamClientsBundledAssetTest {
         // reorder is a deliberate act that updates this test in the same commit.
         assertEquals(
             listOf(
-                "WEB_REMIX", "VISIONOS_1_02", "VISIONOS_0_1", "WEB_CREATOR",
+                "WEB_REMIX", "VISIONOS", "VISIONOS_0_1", "WEB_CREATOR",
                 "ANDROID_VR_1_65_10", "TVHTML5_SIMPLY", "MWEB",
             ),
             parsed().config.clients.map { it.key },
@@ -68,6 +68,6 @@ class StreamClientsBundledAssetTest {
         val byKey = parsed().config.clients.associateBy { it.key }
         assertTrue(byKey.getValue("WEB_CREATOR").loginRequired)
         assertTrue(byKey.getValue("MWEB").loginRequired)
-        assertTrue(byKey.getValue("VISIONOS_1_02").let { !it.loginRequired && !it.loginSupported })
+        assertTrue(byKey.getValue("VISIONOS").let { !it.loginRequired && !it.loginSupported })
     }
 }
