@@ -28,8 +28,10 @@ import java.io.File
 object StreamClientStore {
     private const val TAG = "Zemer_StreamClients"
     private const val ASSET_NAME = "stream_clients.json"
+    // TESTING ONLY - REVERT BEFORE MERGE: pinned to the feature branch so the full remote
+    // fetch/apply/update loop is testable pre-merge. The shipped value fetches master.
     private const val REMOTE_URL =
-        "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/stream_clients.json"
+        "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/feat/remote-stream-clients/library/src/main/assets/stream_clients.json"
 
     private const val REFRESH_TTL_MS = 6 * 60 * 60 * 1000L
 
