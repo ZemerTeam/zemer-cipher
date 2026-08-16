@@ -23,7 +23,8 @@
       "osName": "visionOS",
       "osVersion": "26.5.23O471",
       "deviceMake": "Apple",
-      "deviceModel": "RealityDevice17,1"
+      "deviceModel": "RealityDevice17,1",
+      "enabled": false
     },
     {
       "key": "VISIONOS_0_1",
@@ -36,7 +37,8 @@
       "osName": "visionOS",
       "osVersion": "1.3.21O771",
       "deviceMake": "Apple",
-      "deviceModel": "RealityDevice14,1"
+      "deviceModel": "RealityDevice14,1",
+      "enabled": false
     },
     {
       "key": "WEB_CREATOR",
@@ -85,11 +87,35 @@
     }
   ],
   "families": [
-    { "id": "WEB_REMIX", "title": "YouTube Music Web", "group": "web" },
-    { "id": "VISIONOS", "title": "visionOS", "group": "native" },
-    { "id": "WEB_CREATOR", "title": "YouTube Studio", "group": "creator" },
-    { "id": "ANDROID_VR", "title": "Android VR", "group": "native" },
-    { "id": "TVHTML5", "title": "TVHTML5", "group": "web" },
-    { "id": "MWEB", "title": "Mobile Web", "group": "web" }
+    {
+      "id": "WEB_REMIX",
+      "title": "YouTube Music Web",
+      "group": "web"
+    },
+    {
+      "id": "VISIONOS",
+      "title": "visionOS",
+      "group": "native"
+    },
+    {
+      "id": "WEB_CREATOR",
+      "title": "YouTube Studio",
+      "group": "creator"
+    },
+    {
+      "id": "ANDROID_VR",
+      "title": "Android VR",
+      "group": "native"
+    },
+    {
+      "id": "TVHTML5",
+      "title": "TVHTML5",
+      "group": "web"
+    },
+    {
+      "id": "MWEB",
+      "title": "Mobile Web",
+      "group": "web"
+    }
   ]
 }
