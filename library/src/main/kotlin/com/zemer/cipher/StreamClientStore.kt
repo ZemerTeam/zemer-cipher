@@ -56,6 +56,16 @@ object StreamClientStore {
     var configEpoch: Int = 0
         private set
 
+    /**
+     * Wall-clock ms of the last successful remote sync (a 200 applied OR a 304 not-modified — both
+     * mean the active table matches the deploy channel as of that moment); 0 = never synced this
+     * install (e.g. offline, or the file not on master yet). Persisted via the meta file and
+     * re-seeded at [initialize], so the Stream Sources screen can show "Updated <time>".
+     */
+    @Volatile
+    var lastSyncedMs: Long = 0L
+        private set
+
     @Volatile
     private var lastFailureAttemptMs = 0L
 
@@ -74,6 +84,8 @@ object StreamClientStore {
     internal var cacheDirForTest: File? = null
 
     internal fun armFailureCooldownForTest(ms: Long) { lastFailureAttemptMs = ms }
+
+    internal fun setLastSyncedForTest(ms: Long) { lastSyncedMs = ms }
 
     internal fun setConfigForTest(config: StreamClientParser.StreamClientConfig?) {
         activeConfig = config
@@ -98,6 +110,9 @@ object StreamClientStore {
         }
 
         applyCachedOverlay()
+        // Meta survives only beside a valid cache body (applyCachedOverlay deletes them together),
+        // so a surviving stamp is a truthful last-sync time for the table now active.
+        lastSyncedMs = readMeta()?.second ?: 0L
     }
 
     /**
@@ -297,6 +312,7 @@ object StreamClientStore {
     }
 
     private fun writeMeta(etag: String, lastFetchMs: Long) {
+        lastSyncedMs = lastFetchMs
         try {
             metaFile()?.let { PlayerConfigStore.writeAtomic(it, "$etag\n$lastFetchMs") }
         } catch (e: Exception) {
