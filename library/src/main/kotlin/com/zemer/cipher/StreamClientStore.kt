@@ -33,6 +33,14 @@ object StreamClientStore {
 
     private const val REFRESH_TTL_MS = 6 * 60 * 60 * 1000L
 
+    // A cached remote table REPLACES the bundled one wholesale, so without a bound a device that
+    // synced once and then can never reach the config host again (e.g. a filter that blocks
+    // raw.githubusercontent) would keep that frozen table FOREVER, masking newer bundled tables
+    // arriving via APK updates. Past this age the cache is treated as dead and bundled wins
+    // (the offline-subset 14-day staleness-cap precedent). A healthy device re-stamps the cache
+    // every successful sync (200 or 304), so only persistently-unreachable devices ever hit this.
+    private const val CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000L
+
     // Failure-triggered refreshes (all stream clients failed for a resolution) are rate-limited so
     // a video that fails for unrelated reasons doesn't turn every retry into a GitHub request.
     private const val FAILURE_REFRESH_COOLDOWN_MS = 5 * 60 * 1000L
@@ -122,7 +130,19 @@ object StreamClientStore {
      * lock the device on bundled-only clients until the remote content happens to change.
      */
     internal fun applyCachedOverlay() {
-        val cached = parseSource("cached remote copy") { cacheFile()?.takeIf { it.exists() }?.readText() }
+        // Staleness cap: an over-age cache (or one whose meta/stamp is missing/corrupt — no way
+        // to prove freshness) is dead. withinWindow also treats a backward clock step as expired.
+        val syncStamp = readMeta()?.second
+        val cacheFresh = syncStamp != null &&
+            PlayerConfigStore.withinWindow(System.currentTimeMillis(), syncStamp, CACHE_MAX_AGE_MS)
+        val cached = if (cacheFresh) {
+            parseSource("cached remote copy") { cacheFile()?.takeIf { it.exists() }?.readText() }
+        } else {
+            if (cacheFile()?.exists() == true) {
+                Timber.tag(TAG).w("Cached remote stream clients are stale/unstamped — falling back to bundled")
+            }
+            null
+        }
         activeConfig = if (cached != null) {
             Timber.tag(TAG).d("Using cached remote stream clients (${cached.clients.size} entries)")
             cached

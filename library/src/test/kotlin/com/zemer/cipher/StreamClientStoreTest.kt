@@ -61,7 +61,7 @@ class StreamClientStoreTest {
     @Test
     fun `valid cached remote copy REPLACES bundled wholesale`() {
         cacheBody().writeText(remoteJson)
-        cacheMeta().writeText("\"etag\"\n1700000000000")
+        cacheMeta().writeText("\"etag\"\n${System.currentTimeMillis()}")
         StreamClientStore.applyCachedOverlay()
         // Replace, not merge: the bundled-only client must NOT survive.
         assertEquals(listOf("REMOTE"), StreamClientStore.config()?.clients?.map { it.key })
@@ -80,7 +80,7 @@ class StreamClientStoreTest {
     @Test
     fun `corrupt cache body deletes body and meta together`() {
         cacheBody().writeText("{ corrupt")
-        cacheMeta().writeText("\"etag\"\n1700000000000")
+        cacheMeta().writeText("\"etag\"\n${System.currentTimeMillis()}")
         StreamClientStore.applyCachedOverlay()
         assertEquals(listOf("BUNDLED"), StreamClientStore.config()?.clients?.map { it.key })
         assertFalse(cacheBody().exists())
@@ -90,7 +90,7 @@ class StreamClientStoreTest {
     @Test
     fun `invalid cached file (never-zero rule) falls back to bundled`() {
         cacheBody().writeText("""{"schemaVersion":1,"clients":[]}""")
-        cacheMeta().writeText("\"etag\"\n1700000000000")
+        cacheMeta().writeText("\"etag\"\n${System.currentTimeMillis()}")
         StreamClientStore.applyCachedOverlay()
         assertEquals(listOf("BUNDLED"), StreamClientStore.config()?.clients?.map { it.key })
         assertFalse(cacheBody().exists())
@@ -129,7 +129,7 @@ class StreamClientStoreTest {
         StreamClientStore.applyRemote(parsed(remoteJson), remoteJson, "\"e\"")
         assertTrue(StreamClientStore.lastSyncedMs > 0L)
         // A valid cache + meta pair re-seeds the stamp on overlay (the initialize path).
-        val stamped = 1_700_000_000_000L
+        val stamped = System.currentTimeMillis()
         cacheBody().writeText(remoteJson)
         cacheMeta().writeText("\"e\"\n$stamped")
         StreamClientStore.setLastSyncedForTest(0L)
@@ -137,6 +137,19 @@ class StreamClientStoreTest {
         // applyCachedOverlay itself does not re-seed; initialize does — emulate its tail read.
         // (Covered here structurally: meta survived, so the seed value is available.)
         assertEquals("\"e\"\n$stamped", cacheMeta().readText())
+    }
+
+    @Test
+    fun `stale cached copy is dropped and bundled wins (the frozen-cache defense)`() {
+        cacheBody().writeText(remoteJson)
+        // Synced 15 days ago: past the 14-day cap - a device that can no longer reach the config
+        // host must not keep masking newer bundled tables from APK updates.
+        cacheMeta().writeText("\"etag\"\n${System.currentTimeMillis() - 15L * 24 * 60 * 60 * 1000}")
+        StreamClientStore.applyCachedOverlay()
+        assertEquals(listOf("BUNDLED"), StreamClientStore.config()?.clients?.map { it.key })
+        // Dead cache leaves nothing behind (body + meta go together, as ever).
+        assertFalse(cacheBody().exists())
+        assertFalse(cacheMeta().exists())
     }
 
     @Test
