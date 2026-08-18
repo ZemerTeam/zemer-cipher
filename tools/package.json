@@ -1,0 +1,9 @@
+{
+  "name": "zemer-cipher-tools",
+  "private": true,
+  "type": "module",
+  "description": "Automation tooling for the player_configs.json rotation workflow.",
+  "dependencies": {
+    "jsdom": "^29.1.1"
+  }
+}
