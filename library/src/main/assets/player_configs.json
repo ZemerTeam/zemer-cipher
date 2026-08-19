@@ -275,6 +275,7 @@
     "4881310a": { "sig": "Af(1,5321,INPUT)", "nClass": "cU", "sts": 20683, "aliases": ["e1b99e73"] },
     "1003891b": { "sig": "Af(1,5321,INPUT)", "nClass": "cU", "sts": 20683, "aliases": ["78283a48"] },
     "bf2c8bc1": { "sig": "Af(1,5321,INPUT)", "nClass": "cU", "sts": 20683, "aliases": ["32130766"] },
-    "727fd647": { "sig": "Af(1,5321,INPUT)", "nClass": "cU", "sts": 20683, "aliases": ["2cc87939"] }
+    "727fd647": { "sig": "Af(1,5321,INPUT)", "nClass": "cU", "sts": 20683, "aliases": ["2cc87939"] },
+    "5a0e59cb": { "sig": "Af(1,5321,INPUT)", "nClass": "cU", "sts": 20683, "aliases": ["b03e5c18"] }
   }
 }
