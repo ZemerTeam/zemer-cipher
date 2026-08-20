@@ -471,30 +471,37 @@ jobs:
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      # Read the deployed file back via the contents API, NOT raw.githubusercontent (the raw CDN
-      # lags ~5 min). CRITICAL: a failed READBACK is not proof of a bad deploy — the push already
-      # landed — so it must NEVER trigger the rollback. GitHub's API 5xx/secondary-rate-limits are
-      # common (we hit them repeatedly today), and the old `gh api | base64 -d` under pipefail would
-      # fail the step on any such blip and destructively revert a CORRECT deploy. So: retry the read
-      # with backoff, and set verified=false (the only rollback trigger) ONLY when a successfully
-      # read file is genuinely MISSING the hash. If the file can't be read after retries, warn and
-      # treat as unverified (verified=unknown) — leave the good deploy in place.
+      # Read the deployed file back via the GIT PROTOCOL at the pushed ref — NOT the REST contents
+      # API (and never raw.githubusercontent, which lags ~5 min). The contents API is CDN-cached and
+      # has read-your-writes lag: for minutes after a push it can SUCCESSFULLY return the STALE
+      # pre-push file, which then looks like the hash is "missing" and destructively reverts a
+      # CORRECT deploy (this is exactly what reverted 1a8bfffc on 2026-08-20 — push succeeded, the
+      # cached readback lacked the hash, and a good config was rolled back). Git protocol is
+      # immediately consistent — it is the same backend the push just wrote to — so it cannot serve a
+      # stale blob. CRITICAL (unchanged): a failed READBACK is not proof of a bad deploy — the push
+      # already landed — so it must NEVER trigger the rollback. Retry the read with backoff; set
+      # verified=false (the only rollback trigger) ONLY when a cleanly-read file is genuinely MISSING
+      # the hash. If it can't be read after retries, warn and treat as unverified (verified=unknown)
+      # — leave the good deploy in place.
       - name: Verify deployed file
         id: verify
         if: steps.apply.outputs.applied != ''
         env:
-          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
           TARGET: ${{ steps.branch.outputs.target }}
           APPLIED: ${{ steps.apply.outputs.applied }}
         run: |
+          # Explicit token URL (the repo may be private; persist-credentials:false left none in
+          # .git/config). Same auth the Push/Revert steps use; the token is masked in logs.
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
           read_ok=""
           for attempt in 1 2 3 4 5; do
-            if gh api "repos/${{ github.repository }}/contents/$CONFIG_PATH?ref=$TARGET" \
-                 --jq '.content' 2>/tmp/api.err | base64 -d > /tmp/deployed.json 2>/dev/null \
+            if git fetch --no-tags --force "$REMOTE" "$TARGET" 2>/tmp/git.err \
+               && git show "FETCH_HEAD:$CONFIG_PATH" > /tmp/deployed.json 2>/dev/null \
                && [ -s /tmp/deployed.json ] && node -e 'JSON.parse(require("fs").readFileSync("/tmp/deployed.json","utf8"))' 2>/dev/null; then
               read_ok=1; break
             fi
-            echo "::warning::contents-API read attempt $attempt failed: $(head -c 160 /tmp/api.err 2>/dev/null)"
+            echo "::warning::git read-back attempt $attempt failed: $(head -c 160 /tmp/git.err 2>/dev/null)"
             sleep $((attempt * 5))
           done
           if [ -z "$read_ok" ]; then
