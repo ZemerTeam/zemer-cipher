@@ -284,6 +284,7 @@
     "50c9b939": { "sig": "bf(26,3030,INPUT)", "nClass": "IV", "sts": 20684, "aliases": ["65088fcb"] },
     "3810daca": { "sig": "bf(26,3030,INPUT)", "nClass": "IV", "sts": 20684, "aliases": ["eb0684da"] },
     "f2bf260e": { "sig": "bf(26,3030,INPUT)", "nClass": "IV", "sts": 20684, "aliases": ["8be4b3e3"] },
-    "e937390a": { "sig": "bf(26,3030,INPUT)", "nClass": "IV", "sts": 20684, "aliases": ["ce582150"] }
+    "e937390a": { "sig": "bf(26,3030,INPUT)", "nClass": "IV", "sts": 20684, "aliases": ["ce582150"] },
+    "1a8bfffc": { "sig": "bf(26,3030,INPUT)", "nClass": "IV", "sts": 20684, "aliases": ["0a48cb41"] }
   }
 }
