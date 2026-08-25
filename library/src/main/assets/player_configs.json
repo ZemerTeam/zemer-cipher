@@ -301,6 +301,7 @@
     "b7457b7c": { "sig": "OD(29,1021,INPUT)", "nClass": "Bq", "sts": 20688, "aliases": ["635da7a4"] },
     "257d4488": { "sig": "OD(29,1021,INPUT)", "nClass": "Bq", "sts": 20688, "aliases": ["a59ea5d1"] },
     "92e0100d": { "sig": "RC(3,8128,INPUT)", "nClass": "q4", "sts": 20689, "aliases": ["5bd375e9"] },
-    "9f7c592f": { "sig": "iG(3,8128,INPUT)", "nClass": "sP", "sts": 20689, "aliases": ["f0900aaa"] }
+    "9f7c592f": { "sig": "iG(3,8128,INPUT)", "nClass": "sP", "sts": 20689, "aliases": ["f0900aaa"] },
+    "b1e9a19c": { "sig": "Ik(3,8128,INPUT)", "nClass": "sP", "sts": 20689, "aliases": ["fffb9364"] }
   }
 }
