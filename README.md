@@ -2,6 +2,10 @@
 
 Android library for YouTube cipher deobfuscation and PoToken generation.
 
+**Scope:** this library deciphers web clients' sig/n and mints poTokens. Which stream clients are
+chosen, and how each is tested for whole-song delivery past the CDN's 1-MiB free window, lives in
+[`zemer-app`](https://github.com/ZemerTeam/zemer-app) (`YTPlayerUtils` + `tests/client-fulldownload.mjs`).
+
 ## Origin
 
 The WebView signature-cipher / n-transform deciphering here (`CipherDeobfuscator`, `CipherWebView`,
@@ -42,7 +46,7 @@ YouTube rotates its `player_ias` JS frequently; each rotation needs a per-player
 "445213fb": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["d62bd338"] }
 ```
 
-- key — the 8-hex player hash from the player JS URL; `aliases` - the md5-of-first-10000-bytes
+- key - the 8-hex player hash from the player JS URL; `aliases` - the md5-of-first-10000-bytes
   fallback hash
 - `sig` - the signature deobfuscation call, locked to `name(int,int,INPUT)`
 - `nClass` - the URL class for the n-transform IIFE (built from a local template)
@@ -57,6 +61,24 @@ YouTube rotates its `player_ias` JS frequently; each rotation needs a per-player
    file - run the unit tests.
 3. Push to `master` - deployed apps self-heal from that URL within minutes.
 4. Bump the submodule pointer in `zemer-app` afterwards (bundled defaults stay fresh).
+
+### Automated rotation
+
+The steps above also run automatically. `.github/workflows/player-monitor.yml` watches for
+`player_ias` rotations, derives each unknown config, validates it against the live CDN, and
+(when enabled) commits it straight to `master`, so a rotation deploys without anyone editing
+the file by hand. The deriver and validators live in `tools/` (`propose-config.mjs`,
+`verify-entry.mjs`, `apply-entry.mjs`).
+
+The pipeline is fail-closed. A hash reaches a commit only after two independent HTTP 206
+checks (`propose-config`, then `verify-entry`) and a parser-parity gate, and the untrusted
+player JS is evaluated only in an isolated job that holds no write credential. After the push
+it re-reads the deployed file over git protocol and reverts only a commit it can prove is bad.
+
+Deploy is gated by the `AUTO_DEPLOY_CONFIG` repository variable, which is also the kill
+switch: unset validates and alerts only (writing nothing), `branch` commits to the branch the
+run was triggered from, and `master` commits to `master` (the live deploy). The manual steps
+above remain the fallback for adding a config by hand.
 
 ### Safety model
 
@@ -104,10 +126,30 @@ val result = generator.getWebClientPoToken(videoId, sessionId)
 
 ## Credits
 
-- PoToken generation patterns based on [BgUtils](https://github.com/LuanRT/BgUtils) (MIT License)
-- Cipher function extraction uses standard YouTube deobfuscation techniques (as documented by yt-dlp, NewPipe, etc.)
+Almost all of this library is original work, written into `zemer-app` and extracted here
+(see Origin above): the WebView signature-cipher and n-transform deciphering, the runtime
+execution and script injection, the n-parameter transform logic, and the remote-updatable
+config system that lets it self-heal (the `player_configs.json` schema, `PlayerConfigParser`,
+`PlayerConfigStore`). The config deriver and live HTTP 206 validator that feed it live in
+`zemer-app`. MetrolistGroup's
+[`faraday`](https://github.com/MetrolistGroup/faraday) ports this config model, deriver, and
+validator, and credits [`zemer-cipher`](https://github.com/ZemerTeam/zemer-cipher) and
+[`zemer-app`](https://github.com/ZemerTeam/zemer-app) in its README. MetrolistGroup's
+[`innertubex`](https://github.com/MetrolistGroup/innertubex) ships a port of the cipher solver
+(its `ZemerCipherSolver` class) and lists Zemer among its cipher deobfuscation paths.
 
-All other code (WebView implementation, runtime execution, n-parameter transform logic) is custom implementation.
+The automated CI rotation system (watch a `player_ias` rotation, then derive, live-validate, and
+commit the config automatically) was built first by faraday in July 2026. The `tools/` pipeline
+here is zemer-cipher's own later implementation of that idea (August 2026) on top of this format;
+because devices already self-heal from `master`, a commit here is also the live deploy.
+
+Two narrow pieces build on prior work and are credited here:
+
+- The BotGuard poToken client follows [BgUtils](https://github.com/LuanRT/BgUtils)
+  (MIT License) patterns.
+- Reading YouTube's signature and n functions out of the player is a known deobfuscation
+  technique, also documented by [yt-dlp](https://github.com/yt-dlp/yt-dlp),
+  [NewPipe](https://github.com/TeamNewPipe/NewPipe), and others.
 
 ## License
 
