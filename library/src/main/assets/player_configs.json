@@ -308,6 +308,7 @@
     "04299f43": { "sig": "ez(3,8128,INPUT)", "nClass": "T$", "sts": 20689, "aliases": ["34a97fe3"] },
     "bd4a2521": { "sig": "a3(28,4062,INPUT)", "nClass": "Ff", "sts": 20690, "aliases": ["6413e259"] },
     "c281516d": { "sig": "a3(28,4062,INPUT)", "nClass": "Ff", "sts": 20690, "aliases": ["5b955eaa"] },
-    "0a500c3a": { "sig": "a3(28,4062,INPUT)", "nClass": "Ff", "sts": 20690, "aliases": ["a7f04134"] }
+    "0a500c3a": { "sig": "a3(28,4062,INPUT)", "nClass": "Ff", "sts": 20690, "aliases": ["a7f04134"] },
+    "659ae91c": { "sig": "vQ(28,4062,INPUT)", "nClass": "TW", "sts": 20690, "aliases": ["c655ea8b"] }
   }
 }
