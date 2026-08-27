@@ -317,6 +317,7 @@
     "d5680046": { "sig": "xD(28,4062,INPUT)", "nClass": "n7", "sts": 20690, "aliases": ["05bf234e"] },
     "d01789b5": { "sig": "tq(1,8309,INPUT)", "nClass": "Y_", "sts": 20691, "aliases": ["61bc5466"] },
     "1d81eac9": { "sig": "tq(1,8309,INPUT)", "nClass": "Y_", "sts": 20691, "aliases": ["a25c54c3"] },
-    "c23da62f": { "sig": "tq(1,8309,INPUT)", "nClass": "Y_", "sts": 20691, "aliases": ["1bd73203"] }
+    "c23da62f": { "sig": "tq(1,8309,INPUT)", "nClass": "Y_", "sts": 20691, "aliases": ["1bd73203"] },
+    "c90e7b12": { "sig": "GC(1,8309,INPUT)", "nClass": "zk", "sts": 20691, "aliases": ["b92bea09"] }
   }
 }
