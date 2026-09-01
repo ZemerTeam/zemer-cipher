@@ -115,19 +115,30 @@ each outcome has one response:
 | a live entry fails, two consecutive runs | **bench** it (`enabled: false`) and deploy |
 | a benched entry drains whole songs, two consecutive runs | **un-bench** it and deploy |
 | a retired client drains a whole song | issue *Retired client works again* (re-adding is a human, validated table change) |
-| `clientVersion` behind yt-dlp master (`tests/scan-client-versions.mjs`) | issue *version drift* — alert only; a stale version still streaming is not a kill |
+| an entry's identity (clientVersion, userAgent, os/device) is behind yt-dlp master (`tests/scan-client-versions.mjs`, per the entry's `mirrors` key) | **bump** it: the entry is copied into a candidate table with yt-dlp's values (`tools/clients/apply-bump.mjs --out`), the candidate must drain a whole song on EVERY validation video, then it deploys; an unverified candidate only opens an *identity drift* issue with the reason |
 | the MAIN client drained nothing anywhere | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table |
+| "Sign in to confirm you're not a bot" on an anonymous request | `bot-gated` = INCONCLUSIVE (the runner's IP, not the client): never a kill, never a bench, never a verified bump |
 
 The open detection issues are the pipeline's memory: a client is benched only when its *failing*
 issue was already open (at least `MIN_FLAG_AGE_MINUTES`, default 60) before the run — one bad
 scan can never write. `tools/clients/decide.mjs` holds the rules (`clients.test.mjs`): the main is
 never benched, at least `MIN_LIVE_FALLBACKS` (default 2) live fallbacks must remain, and
-`tools/clients/apply-bench.mjs` — the only writer — edits exactly ONE line, re-parses the result
-with the harness loader and refuses anything else. Deploy is gated by the repository variable
-`AUTO_DEPLOY_CLIENTS` (unset = alert only, `branch`, `master`) with the same read-back-and-revert
-step as the player pipeline; `CLIENT_HARNESS_REF` pins the zemer-app ref that supplies the harness.
-Secrets: `YT_COOKIE` / `YT_VISITOR_DATA` / `YT_DATASYNC_ID` (login-required clients are skipped
-without a cookie) and `VALIDATION_VIDEO_IDS` (variable, comma-separated).
+`tools/clients/apply-bench.mjs` (bench / un-bench: exactly ONE line) and `apply-bump.mjs`
+(identity bump: only clientVersion / userAgent / osName / osVersion / deviceMake / deviceModel /
+androidSdkVersion of ONE entry, values re-validated with the parser's shapes) are the only writers;
+both re-parse the result with the harness loader and refuse anything else — a different key,
+protocol, flag, order or entry can never change unattended. Deploy is gated by the repository
+variable `AUTO_DEPLOY_CLIENTS` (unset = alert only, `branch`, `master`) with the same
+read-back-and-revert step as the player pipeline; `CLIENT_HARNESS_REF` pins the zemer-app ref that
+supplies the harness. Secrets: `YT_COOKIE` / `YT_VISITOR_DATA` / `YT_DATASYNC_ID` (login-required
+clients are skipped without a cookie), `SCAN_PROXY` (a residential/mobile egress URL — GitHub's
+runners are bot-gated for anonymous InnerTube requests, so without it the login-less clients stay
+`bot-gated`/inconclusive and only the cookie-authenticated ones are judged), and the variable
+`VALIDATION_VIDEO_IDS` (comma-separated; more videos = a stronger quorum).
+
+Entry field the harness reads and the app ignores: `mirrors` — the yt-dlp `INNERTUBE_CLIENTS` key
+whose identity the entry follows (`web_music`, `visionos`, ...). An entry without it is pinned on
+purpose (`VISIONOS_0_1`, the deliberately old second-chance config) and is never compared or bumped.
 
 ## Usage
 
