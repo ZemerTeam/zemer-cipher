@@ -1,0 +1,684 @@
+name: YouTube Player Monitor
+
+# Detects a rotated YouTube player_ias, derives + empirically validates its cipher config, and
+# (when enabled) commits it to this repo. Devices fetch library/src/main/assets/player_configs.json
+# from this repo at runtime, so a commit here IS the deploy — which is why the pipeline is split
+# into three jobs with the credential deliberately kept away from the untrusted half:
+#
+#   scan    permissions: {}        — no token, no secrets beyond the YouTube cookie. This is the
+#                                    ONLY job that evaluates 2.9 MB of obfuscated YouTube base.js
+#                                    in jsdom (which is NOT a security boundary): BOTH the derive
+#                                    (propose-config, in a scrubbed child process) and the
+#                                    independent re-verify (verify-entry) run here. It holds no
+#                                    write credential, so an eval-escape has nothing to steal.
+#   alert   permissions: issues    — the watchdog: issue + email. Runs even if deploy is disabled
+#                                    or fails, so a human always hears about it.
+#   deploy  permissions: contents  — holds the write token and NEVER evaluates player JS. It only
+#                                    appends the already-twice-verified entry (pure JSON/text +
+#                                    strict re-parse), runs the parser parity gate, and commits.
+#   notify  permissions: issues    — after deploy: closes the resolved detection issue and posts
+#                                    the outcome to Telegram.
+#
+# Deploy is OFF unless the repository variable AUTO_DEPLOY_CONFIG is set:
+#   (unset) — validate and alert only, write nothing.        <- default
+#   branch  — commit back onto the branch the run was triggered from (burn-in on a feature
+#             branch; devices are unaffected, and writing to master is explicitly refused).
+#   master  — commit straight to master (the live deploy).
+# That variable is the kill switch: clearing it stops all writing on the next run.
+
+"on":
+  schedule:
+    # NOTE: GitHub only runs `schedule` from the DEFAULT branch, so this activates on merge.
+    # Also note GitHub's scheduler is best-effort — measured on zemer-app, a */30 cron drifted a
+    # median +20m and once skipped 96 minutes. For a tighter cadence drive `repository_dispatch`
+    # from an external cron instead; this schedule is the floor, not the target.
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [player-cron]
+  push:
+    # Lets the workflow be exercised on its own feature branch before it is merged. Deploy stays
+    # inert here because AUTO_DEPLOY_CONFIG is unset until someone deliberately sets it.
+    branches: ['feat/auto-player-config']
+
+# Serialize: an overlapping schedule + dispatch must not both scan, both see "no open issue", and
+# both open a duplicate — or worse, both try to append the same entry. Queue rather than cancel so
+# an in-progress deploy finishes cleanly.
+concurrency:
+  group: youtube-player-monitor
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  HARNESS_REPO: ZemerTeam/zemer-app
+  CONFIG_PATH: library/src/main/assets/player_configs.json
+
+jobs:
+  # Guard the safety gates. tools.test.mjs exercises the append-only / alias-collision / ambiguity
+  # / CDN-verdict logic that stands between the pipeline and every device's config table; nothing
+  # else runs it, so run it FIRST and gate the rest of the pipeline on it. No secrets, no token,
+  # and no npm install — the pure predicates import only node builtins (jsdom is lazy-loaded and
+  # never touched by the tests).
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run tools unit tests
+        run: node --test tools/tools.test.mjs
+
+  scan:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: {}
+    outputs:
+      unknown_count: ${{ steps.scan.outputs.unknown_count }}
+      summary: ${{ steps.scan.outputs.summary }}
+      proposed: ${{ steps.propose.outputs.proposed }}
+      proposed_hashes: ${{ steps.propose.outputs.proposed_hashes }}
+    steps:
+      - name: Checkout zemer-cipher
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The derivation/validation harness lives in zemer-app and is deliberately NOT copied here:
+      # the config validation rules already exist in two readers (the Kotlin PlayerConfigParser and
+      # tests/player-configs.mjs) pinned together by shared parity fixtures, and a third hand-made
+      # copy is how those drift apart. zemer-app is public, so this needs no credential.
+      - name: Checkout validation harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix harness/tests
+          npm ci --prefix tools --no-audit --no-fund
+
+      # Sample the live player surfaces MANY times. YouTube A/B-tests new players: a canary served
+      # ~1/6 of the time is missed ~83% of the time by a single sample and only surfaces once it has
+      # already rotated in, i.e. once playback is already breaking. "Known" is decided by the
+      # harness loader (the app's own validation rules) against THIS repo's config file, including
+      # md5 aliases. Non-zero exit means the committed file is itself invalid — devices would reject
+      # it wholesale, so a red run is the correct alarm for that.
+      - name: Scan live players
+        id: scan
+        run: |
+          node harness/tests/scan-live-players.mjs "$CONFIG_PATH" 30 > /tmp/scan.json 2> /tmp/scan.log
+          cat /tmp/scan.log
+          COUNT=$(node -e "process.stdout.write(String((JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).unknown||[]).length))")
+          echo "unknown_count=$COUNT" >> "$GITHUB_OUTPUT"
+          {
+            echo "summary<<SUMMARY_EOF"
+            node -e "const s=JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8'));console.log((s.unknown||[]).map(u=>'- '+u.hash+' (seen '+u.count+'x of '+s.samples+', md5 '+u.md5+', sts '+u.sts+')').join('\n'))"
+            echo "SUMMARY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Derive + empirically validate each unknown player. HTTP 206 off the live CDN is ground
+      # truth — regex extraction is not, because several constant pairs can decipher correctly and
+      # only the server says which one it accepts. propose-config refuses to emit anything when more
+      # than one pair works.
+      #
+      # YT_COOKIE/YT_VISITOR_DATA are optional. Without them this runs in guest mode, which does
+      # reach 206 from a runner but is bot-gated on almost every video id (measured: 1 of 10 usable
+      # from Azure IPs). With a throwaway account's cookie any video works, including the configured
+      # VALIDATION_VIDEO_ID.
+      # Derive AND independently verify here, in the isolated permissions:{} job. BOTH untrusted
+      # jsdom evals (propose-config's child validator and verify-entry) run in the job that holds
+      # NO write credential — the deploy job that holds the app token never evaluates player JS.
+      # Only entries that pass two independently-written 206 checks are uploaded for deploy.
+      - name: Derive and independently verify unknown players
+        id: propose
+        if: steps.scan.outputs.unknown_count != '0'
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
+        run: |
+          # Entry files (consumed by deploy) live in /tmp/entries; verbose logs in /tmp/logs — so
+          # the uploaded artifact is ONLY clean {hash,entry} files, never the verdict blobs.
+          mkdir -p /tmp/entries /tmp/logs
+          PROPOSED=0
+          HASHES=""
+          for HASH in $(node -e "const s=JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8'));process.stdout.write((s.unknown||[]).map(u=>u.hash).join(' '))"); do
+            echo "::group::validate $HASH"
+            # 1) DERIVE + validate (propose-config spawns the harness validator in a scrubbed child).
+            if node tools/propose-config.mjs "$HASH" --harness harness --out "/tmp/entries/$HASH.json" > "/tmp/logs/$HASH.propose.json"; then
+              # 2) INDEPENDENTLY re-verify the derived entry with cipher's own implementation
+              #    (>=2 distinct signatures, real bytes drained). Two agreeing 206 checks, both in
+              #    this no-token job, gate the deploy.
+              if node tools/verify-entry.mjs --entry "/tmp/entries/$HASH.json" --harness harness > "/tmp/logs/$HASH.verify.json"; then
+                echo "validated + independently verified $HASH"
+                PROPOSED=$((PROPOSED+1))
+                HASHES="$HASHES $HASH"
+              else
+                echo "::warning::$HASH derived but FAILED independent verification — not deploying"
+                cat "/tmp/logs/$HASH.verify.json" || true
+                rm -f "/tmp/entries/$HASH.json"
+              fi
+            else
+              echo "::warning::could not validate $HASH — $(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/logs/$HASH.propose.json','utf8')).reason||'unknown')" 2>/dev/null || echo 'see log')"
+            fi
+            cat "/tmp/logs/$HASH.propose.json" || true
+            echo "::endgroup::"
+          done
+          echo "proposed=$PROPOSED" >> "$GITHUB_OUTPUT"
+          echo "proposed_hashes=$(echo $HASHES | xargs)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload proposed entries
+        if: steps.propose.outputs.proposed != '' && steps.propose.outputs.proposed != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: proposed-entries
+          path: /tmp/entries/*.json
+          retention-days: 7
+
+      - name: Upload scan result
+        if: steps.scan.outputs.unknown_count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-result
+          path: /tmp/scan.json
+          retention-days: 7
+
+  # The watchdog. Runs whether or not deploy is enabled or succeeds, so a rotation is never silent.
+  alert:
+    needs: scan
+    if: needs.scan.outputs.unknown_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    # JOB-level so the email step's `if` can read it. A step's OWN env is NOT in scope for that
+    # step's `if` (only workflow/job env is), so the previous step-scoped mirror always evaluated
+    # empty and the email never sent. secrets aren't usable in `if` directly, hence the mirror.
+    env:
+      GMAIL_USER: ${{ secrets.GMAIL_USERNAME }}
+    steps:
+      # Open issues as the Zemer-Dude GitHub App (logo avatar). No fallback: if the token can't be
+      # minted this job fails — Telegram (a separate job) and email still carry the alert.
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: scan-result
+          path: /tmp
+
+      - name: Open issues for unknown players
+        uses: actions/github-script@v7
+        env:
+          PROPOSED_HASHES: ${{ needs.scan.outputs.proposed_hashes }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CONFIG }}
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const fs = require('fs');
+            const scan = JSON.parse(fs.readFileSync('/tmp/scan.json', 'utf8'));
+            const validated = new Set((process.env.PROPOSED_HASHES || '').split(/\s+/).filter(Boolean));
+            const mode = process.env.DEPLOY_MODE || '(disabled)';
+
+            // Dedup by issue TITLE across ALL open issues, not by label: issues opened by an app
+            // token can arrive label-less, so a label-filtered query returns nothing and every run
+            // opens a duplicate. paginate() so a long list can't hide a match past page 1.
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
+            });
+            const openTitles = new Set(openIssues.map(i => i.title));
+
+            for (const u of scan.unknown) {
+              const title = `New YouTube player detected: ${u.hash}`;
+              if (openTitles.has(title)) { console.log(`Issue already open for ${u.hash}, skipping.`); continue; }
+              const auto = validated.has(u.hash)
+                ? `- **Auto-validated**: yes (HTTP 206 confirmed). Deploy mode: \`${mode}\``
+                : `- **Auto-validated**: NO — needs a human. Run \`node tests/validate-player-config.mjs ${u.hash}\``;
+              const body = [
+                '## New YouTube Player JS Detected',
+                '',
+                `- **Player hash**: \`${u.hash}\``,
+                `- **MD5 fallback**: \`${u.md5}\``,
+                `- **sts**: \`${u.sts}\``,
+                `- **Observed this run**: seen ${u.count} of ${scan.samples} samples` +
+                  (u.count * 3 < scan.samples ? ' — low-rate **canary**, caught early before it rotates in' : ''),
+                auto,
+                `- **player_ias URL**: https://www.youtube.com/s/player/${u.hash}/player_ias.vflset/en_GB/base.js`,
+                '',
+                'Devices self-heal from `player_configs.json` on this repo\'s default branch within minutes; no APK release is needed.',
+              ].join('\n');
+
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo, title, body,
+                labels: ['player-update', 'cipher'],
+              });
+              console.log(`Opened issue: ${title}`);
+            }
+
+
+      # !cancelled(): the email must go out even if issue creation failed — the alert matters more.
+      # env.GMAIL_USER is the JOB-level mirror (see the job env above); secrets aren't usable in if.
+      - name: Send email notification
+        if: ${{ !cancelled() && env.GMAIL_USER != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "New YouTube player(s) detected — cipher update required"
+          to: dietdroidwp@gmail.com
+          from: Zemer CI <${{ secrets.GMAIL_USERNAME }}>
+          body: |
+            New / unknown YouTube player(s) detected by the multi-sample monitor.
+            (Low-rate hits are A/B canaries caught early, before they rotate in and break playback.)
+
+            ${{ needs.scan.outputs.summary }}
+
+            Auto-validated: ${{ needs.scan.outputs.proposed_hashes }}
+            Deploy mode:    ${{ vars.AUTO_DEPLOY_CONFIG }}
+
+            Issues: https://github.com/${{ github.repository }}/issues
+
+  deploy:
+    needs: scan
+    if: >-
+      needs.scan.outputs.proposed != '' && needs.scan.outputs.proposed != '0' &&
+      (vars.AUTO_DEPLOY_CONFIG == 'branch' || vars.AUTO_DEPLOY_CONFIG == 'master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      applied: ${{ steps.apply.outputs.applied }}
+      target: ${{ steps.branch.outputs.target }}
+      sha: ${{ steps.push.outputs.sha }}
+      verified: ${{ steps.verify.outputs.verified }}
+    steps:
+      # Commit as the Zemer-Dude GitHub App (logo avatar) when it's configured: set repo variable
+      # ZEMER_APP_ID and secret ZEMER_APP_PRIVATE_KEY. Until then this step is skipped and the job
+      # The deploy commits as the Zemer-Dude App. No fallback: if the token can't be minted the job
+      # FAILS rather than committing under any other identity.
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      # `branch` mode commits back onto the branch the run was triggered from, so the whole
+      # pipeline can be exercised on a feature branch without devices ever seeing the result.
+      # `master` mode is the live deploy.
+      # persist-credentials: false keeps the write token OUT of .git/config, so it is never on disk
+      # while the parser parity gate runs `./gradlew` (third-party Gradle plugins/deps executing in
+      # the token-holding job). The token is supplied explicitly only at the final push command.
+      - name: Checkout deploy target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.AUTO_DEPLOY_CONFIG == 'master' && 'master' || github.ref_name }}
+          token: ${{ steps.bot.outputs.token }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      # Belt and braces: `branch` mode must never write to master, even if it is somehow triggered
+      # from there (a scheduled run, for instance, always fires on the default branch).
+      - name: Refuse to write to master in branch mode
+        if: vars.AUTO_DEPLOY_CONFIG == 'branch' && github.ref_name == 'master'
+        run: |
+          echo "::error::AUTO_DEPLOY_CONFIG=branch but this run was triggered from master — refusing to write"
+          exit 1
+
+      - name: Checkout validation harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # No `npm ci` here on purpose: this job runs only apply-entry (imports the harness parser,
+      # node-builtins only) and gen-player-dates (git + builtins) — the jsdom-heavy verify-entry
+      # moved to the scan job. Not installing harness/tools deps keeps that whole transitive
+      # supply chain out of the job that holds the write token.
+      - uses: actions/download-artifact@v4
+        with:
+          name: proposed-entries
+          path: /tmp/entries
+
+      # The App's bot avatar is matched by the <uid>+<slug>[bot]@users.noreply.github.com author
+      # email; the uid is looked up at runtime from the token's own app-slug. No fallback identity:
+      # an empty app-slug means the token step failed, so fail here rather than commit as anyone else.
+      - name: Configure commit identity
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          APP_SLUG: ${{ steps.bot.outputs.app-slug }}
+        run: |
+          if [ -z "$APP_SLUG" ]; then
+            echo "::error::no Zemer-Dude App token — refusing to commit under any other identity"
+            exit 1
+          fi
+          uid="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "Zemer-Dude"
+          git config user.email "${uid}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git config --get user.name
+
+      - name: Resolve deploy target
+        id: branch
+        run: |
+          TARGET="${{ vars.AUTO_DEPLOY_CONFIG == 'master' && 'master' || github.ref_name }}"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          # The tip BEFORE any bot commit — the known-good SHA the revert step rolls back to.
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "committing to '$TARGET' (base $(git rev-parse --short HEAD))"
+          git --no-pager log --oneline -1
+
+      # Each entry was already independently verified in the isolated scan job (two agreeing 206
+      # checks, both written by different code). This job holds the write credential and therefore
+      # NEVER evaluates player JS — it only appends the pre-verified entry, which apply-entry does
+      # with pure JSON/text ops plus a strict re-parse against the app's own rules.
+      - name: Apply verified entries
+        id: apply
+        run: |
+          APPLIED=""
+          for FILE in /tmp/entries/*.json; do
+            HASH=$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('$FILE','utf8')).hash||''))")
+            [ -n "$HASH" ] || { echo "skipping non-entry file $FILE"; continue; }
+            echo "::group::apply $HASH"
+            APPLY=$(node tools/apply-entry.mjs --config "$CONFIG_PATH" --entry "$FILE" --harness harness)
+            echo "$APPLY"
+            if [ "$(echo "$APPLY" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(JSON.parse(s).noop)))")" = "true" ]; then
+              echo "$HASH already covered — nothing to do"
+              echo "::endgroup::"
+              continue
+            fi
+            git add "$CONFIG_PATH"
+            # [skip ci] is load-bearing: App-token pushes DO re-trigger workflows (unlike the
+            # default GITHUB_TOKEN), so without it this workflow re-runs on its own commit.
+            git commit -m "feat(configs): add player $HASH (sts $(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('$FILE','utf8')).entry.sts))")) [skip ci]"
+            APPLIED="$APPLIED $HASH"
+            echo "::endgroup::"
+          done
+          echo "applied=$(echo $APPLIED | xargs)" >> "$GITHUB_OUTPUT"
+
+      # The app's real parser, on the exact bytes about to be pushed. The harness parser already
+      # accepted them and shared fixtures pin the two together, but this is the one that runs on
+      # devices — worth 3 minutes before an unattended deploy.
+      - name: Parser parity gate
+        if: steps.apply.outputs.applied != ''
+        run: ./gradlew --no-daemon :library:test
+
+      - name: Refresh player_dates
+        if: steps.apply.outputs.applied != ''
+        continue-on-error: true
+        run: |
+          # Cosmetic only (a UI label); a failure here must never block a config deploy.
+          #
+          # gen-player-dates.mjs is written for the zemer-app layout: it hardcodes `cipher/` as the
+          # repo root (readFileSync("cipher/library/...") and `git -C cipher log`). Running it from
+          # this repo therefore needs that name to exist. Rather than fork the script — it is the
+          # single source for how a support date is derived — run it from a scratch directory whose
+          # `cipher` entry points back at the workspace. The symlink lives outside the repo, so the
+          # working tree stays clean.
+          if [ -f harness/tests/gen-player-dates.mjs ]; then
+            mkdir -p /tmp/dates
+            ln -sfn "$GITHUB_WORKSPACE" /tmp/dates/cipher
+            (cd /tmp/dates && node "$GITHUB_WORKSPACE/harness/tests/gen-player-dates.mjs") || \
+              echo "::warning::player_dates refresh failed — config deploy is unaffected"
+            if ! git diff --quiet player_dates.json; then
+              git add player_dates.json
+              git commit -m "config: refresh player_dates for ${{ steps.apply.outputs.applied }} [skip ci]"
+            fi
+          fi
+
+      - name: Push
+        id: push
+        if: steps.apply.outputs.applied != ''
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+        run: |
+          # Explicit token URL because persist-credentials:false left none in .git/config. The
+          # token is a masked secret, so it does not leak in logs.
+          git push "https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}" "HEAD:${TARGET}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # Read the deployed file back via the GIT PROTOCOL at the pushed ref — NOT the REST contents
+      # API (and never raw.githubusercontent, which lags ~5 min). The contents API is CDN-cached and
+      # has read-your-writes lag: for minutes after a push it can SUCCESSFULLY return the STALE
+      # pre-push file, which then looks like the hash is "missing" and destructively reverts a
+      # CORRECT deploy (this is exactly what reverted 1a8bfffc on 2026-08-20 — push succeeded, the
+      # cached readback lacked the hash, and a good config was rolled back). Git protocol is
+      # immediately consistent — it is the same backend the push just wrote to — so it cannot serve a
+      # stale blob. CRITICAL (unchanged): a failed READBACK is not proof of a bad deploy — the push
+      # already landed — so it must NEVER trigger the rollback. Retry the read with backoff; set
+      # verified=false (the only rollback trigger) ONLY when a cleanly-read file is genuinely MISSING
+      # the hash. If it can't be read after retries, warn and treat as unverified (verified=unknown)
+      # — leave the good deploy in place.
+      - name: Verify deployed file
+        id: verify
+        if: steps.apply.outputs.applied != ''
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+          APPLIED: ${{ steps.apply.outputs.applied }}
+        run: |
+          # Explicit token URL (the repo may be private; persist-credentials:false left none in
+          # .git/config). Same auth the Push/Revert steps use; the token is masked in logs.
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          read_ok=""
+          for attempt in 1 2 3 4 5; do
+            if git fetch --no-tags --force "$REMOTE" "$TARGET" 2>/tmp/git.err \
+               && git show "FETCH_HEAD:$CONFIG_PATH" > /tmp/deployed.json 2>/dev/null \
+               && [ -s /tmp/deployed.json ] && node -e 'JSON.parse(require("fs").readFileSync("/tmp/deployed.json","utf8"))' 2>/dev/null; then
+              read_ok=1; break
+            fi
+            echo "::warning::git read-back attempt $attempt failed: $(head -c 160 /tmp/git.err 2>/dev/null)"
+            sleep $((attempt * 5))
+          done
+          if [ -z "$read_ok" ]; then
+            echo "::warning::could not read back the deployed file after retries — the push landed (git confirmed), treating as UNVERIFIED, NOT reverting"
+            echo "verified=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          MISSING=$(node -e '
+            const fs = require("fs");
+            const d = JSON.parse(fs.readFileSync("/tmp/deployed.json", "utf8"));
+            const hashes = process.argv[1].split(/\s+/).filter(Boolean);
+            process.stdout.write(hashes.filter((h) => !d.players[h]).join(","));
+          ' "$APPLIED")
+          if [ -n "$MISSING" ]; then
+            echo "::error::deployed file is genuinely MISSING: $MISSING — rolling back"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "verified $APPLIED present on $TARGET ($(node -e 'process.stdout.write(String(Object.keys(JSON.parse(require("fs").readFileSync("/tmp/deployed.json","utf8")).players).length))') entries)"
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      # Roll back ONLY on a PROVEN bad deploy (verified=='false': the file was read cleanly and the
+      # hash is truly absent) — never on a mere API/read failure. Revert base_sha..HEAD as one
+      # [skip ci] commit (no history rewrite, correct for any number of commits). Retry the rollback
+      # push, refetching on a non-fast-forward so a concurrent commit can't strand the bad config.
+      - name: Revert on proven bad deploy
+        if: always() && steps.verify.outputs.verified == 'false'
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+          BASE_SHA: ${{ steps.branch.outputs.base_sha }}
+        run: |
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          for attempt in 1 2 3; do
+            git revert --no-edit --no-commit "${BASE_SHA}..HEAD" 2>/dev/null || true
+            git commit -m "revert: roll back failed player deploy [skip ci]" 2>/dev/null || true
+            if git push "$REMOTE" "HEAD:${TARGET}"; then
+              echo "::error::rolled back the bad deploy to ${BASE_SHA}"
+              exit 0
+            fi
+            echo "::warning::rollback push failed (attempt $attempt) — refetching $TARGET and retrying"
+            git fetch "$REMOTE" "$TARGET" && git reset --hard FETCH_HEAD
+            sleep 5
+          done
+          echo "::error::COULD NOT roll back the bad deploy after retries — manual intervention required"
+          exit 1
+
+  # Telegram reports what the bot actually DID, so it has to wait for deploy — the alert job runs
+  # in parallel with it and cannot know the outcome. always() so a failed or skipped deploy is
+  # still reported: silence after a detected rotation is the one thing this must never do.
+  notify:
+    needs: [scan, alert, deploy]
+    if: always() && needs.scan.outputs.unknown_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      # Close EVERY open detection issue whose hash is now covered on this repo's master — which
+      # covers all the ways one can be resolved: auto-deployed this run, deployed by hand
+      # out-of-band (deploy no-op), or a leftover duplicate. `needs: alert` makes this run AFTER the
+      # (fast, parallel) alert job, so the issue it opens always exists by now — the previous
+      # deploy-only race (deploy finishing before alert created the issue) is gone. Reads coverage
+      # from master itself rather than trusting deploy.applied, so a no-op deploy still closes.
+      #
+      # Uses the built-in GITHUB_TOKEN (issues:write via this job's permissions); the Zemer-Dude App
+      # token is NOT granted comment/close ('Resource not accessible by integration'), and closing
+      # needs no bot identity. continue-on-error so a hiccup here can never fail the run or block the
+      # Telegram alert below. REST (comment POST + state PATCH).
+      - name: Close resolved detection issues
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          REPO: ${{ github.repository }}
+          CONFIG_PATH: ${{ env.CONFIG_PATH }}
+        run: |
+          # The accepted key space on master (primaries + md5 aliases).
+          gh api "repos/$REPO/contents/$CONFIG_PATH?ref=master" --jq '.content' 2>/dev/null | base64 -d > /tmp/master.json || { echo "::warning::could not read master config — skipping issue cleanup"; exit 0; }
+          COVERED=$(node -e '
+            const d = JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));
+            const s = new Set();
+            for (const [k,e] of Object.entries(d.players)) { s.add(k); for (const a of (e.aliases||[])) s.add(a); }
+            process.stdout.write([...s].join(" "));
+          ')
+          gh issue list --repo "$REPO" --state open --limit 100 --json number,title \
+            --jq '.[] | select(.title | test("^New YouTube player detected: [a-f0-9]{8}$")) | [.number, (.title | sub("New YouTube player detected: "; ""))] | @tsv' \
+          | while IFS=$'\t' read -r NUM HASH; do
+              case " $COVERED " in
+                *" $HASH "*)
+                  gh api --method POST "repos/$REPO/issues/$NUM/comments" \
+                    -f body="Resolved — \`${HASH}\` is now on master${SHA:+ (${SHA})}. Devices self-heal within minutes." \
+                    || echo "::warning::could not comment on #$NUM"
+                  gh api --method PATCH "repos/$REPO/issues/$NUM" -f state=closed \
+                    && echo "closed #$NUM ($HASH)" || echo "::warning::could not close #$NUM" ;;
+                *) echo "#$NUM ($HASH) not yet on master — leaving open" ;;
+              esac
+            done
+
+      # Same shape as zemer-app's release-build.yml: curl to the Bot API, recipients = the primary
+      # chat (TELEGRAM_CHAT_ID secret) plus any added users in the TELEGRAM_CHAT_IDS repo variable
+      # (comma / space / newline separated), deduped, blanks dropped. To add a user: they open the
+      # bot and press Start, then add their numeric chat id to that variable.
+      #
+      # Every `${{ }}` value goes through env: and is read as a quoted shell var rather than being
+      # inlined, so free text can never break or inject into the script.
+      - name: Send Telegram notification
+        # always(): the alert is this job's whole purpose — nothing before it (token mint, issue
+        # cleanup) may ever skip it.
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          PRIMARY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EXTRA_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
+          # A forum group routes to a specific topic by message_thread_id; leave unset to post to
+          # General / a non-forum chat. Applies only to the PRIMARY chat (the group), not the
+          # per-user DMs in EXTRA_CHAT_IDS.
+          THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID }}
+          SUMMARY: ${{ needs.scan.outputs.summary }}
+          VALIDATED: ${{ needs.scan.outputs.proposed_hashes }}
+          UNKNOWN_COUNT: ${{ needs.scan.outputs.unknown_count }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CONFIG }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          APPLIED: ${{ needs.deploy.outputs.applied }}
+          VERIFIED: ${{ needs.deploy.outputs.verified }}
+          TARGET: ${{ needs.deploy.outputs.target }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "No TELEGRAM_BOT_TOKEN — skipping Telegram."
+            exit 0
+          fi
+
+          # The headline is the OUTCOME, not the detection: with auto-commit on, "a player was
+          # detected" is no longer the news — whether it got deployed is.
+          if [ "$DEPLOY_RESULT" = "success" ] && [ -n "$APPLIED" ]; then
+            HEAD_LINE="Player config deployed"
+            ACTION=$(printf "Committed: %s\nBranch: %s\nCommit: %s/commit/%s" \
+              "$APPLIED" "$TARGET" "$REPO_URL" "$SHA")
+          elif [ "$DEPLOY_RESULT" = "success" ]; then
+            HEAD_LINE="Player already covered"
+            ACTION="Nothing to commit — the config was already on the deploy branch."
+          elif [ "$DEPLOY_RESULT" = "failure" ] && [ "$VERIFIED" = "false" ]; then
+            # The config WAS pushed, then post-deploy verification proved it wrong and the rollback
+            # ran. Do NOT say "nothing was written" — a commit reached master and was reverted.
+            HEAD_LINE="Player config deploy FAILED — rolled back"
+            ACTION=$(printf "Committed %s to %s then verification found it MISSING; an automatic rollback ran. Confirm master is clean. Needs a human." \
+              "${APPLIED:-?}" "$TARGET")
+          elif [ "$DEPLOY_RESULT" = "failure" ]; then
+            HEAD_LINE="Player config deploy FAILED"
+            ACTION="Validation or a pre-push gate rejected it; nothing was pushed. Needs a human."
+          elif [ "$DEPLOY_RESULT" = "skipped" ] && [ -n "$VALIDATED" ]; then
+            HEAD_LINE="Player validated, NOT deployed"
+            ACTION=$(printf "Auto-deploy is off (AUTO_DEPLOY_CONFIG=%s). Validated but not committed." \
+              "${DEPLOY_MODE:-unset}")
+          else
+            HEAD_LINE="New player could NOT be auto-validated"
+            ACTION="No entry passed the 206 check. Needs a human: node tests/validate-player-config.mjs <hash>"
+          fi
+
+          MESSAGE=$(printf "%s\n\nDetected (%s):\n%s\n\nAuto-validated: %s\n\n%s\n\nRun: %s" \
+            "$HEAD_LINE" "$UNKNOWN_COUNT" "$SUMMARY" "${VALIDATED:-none}" "$ACTION" "$RUN_URL")
+
+          RECIPIENTS=$(printf '%s %s' "$PRIMARY_CHAT_ID" "$EXTRA_CHAT_IDS" \
+            | tr ',\n' '  ' | tr -s ' ' '\n' | awk 'NF && !seen[$0]++')
+
+          for CID in $RECIPIENTS; do
+            # The topic thread applies only to the primary (group) chat; a DM has no topics.
+            THREAD_ARG=()
+            if [ -n "$THREAD_ID" ] && [ "$CID" = "$PRIMARY_CHAT_ID" ]; then
+              THREAD_ARG=(-d "message_thread_id=${THREAD_ID}")
+            fi
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              -d chat_id="$CID" \
+              "${THREAD_ARG[@]}" \
+              --data-urlencode "text=${MESSAGE}"
+          done
