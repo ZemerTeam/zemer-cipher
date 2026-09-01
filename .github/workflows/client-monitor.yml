@@ -101,7 +101,13 @@ jobs:
           node-version: '20'
 
       - name: Install harness dependencies
-        run: npm ci --prefix harness/tests
+        run: |
+          npm ci --prefix harness/tests
+          # The harness is written for the zemer-app layout, where the cipher submodule sits at
+          # ../cipher relative to tests/ (player_configs.json for the cipher, stream_clients.json for
+          # the loader). This checkout IS that repo, so point the expected path at the workspace
+          # rather than fork the path logic.
+          ln -sfn "$GITHUB_WORKSPACE" harness/cipher
 
       # Whole-song drains of every known client on every validation video, against THIS repo's table
       # (STREAM_CLIENTS_JSON points the loader at the checked-out file, so a branch run scans the
@@ -117,7 +123,8 @@ jobs:
           VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
         run: |
           STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
-            node harness/tests/scan-stream-clients.mjs > /tmp/scan.json 2> /tmp/scan.log
+            node harness/tests/scan-stream-clients.mjs > /tmp/scan.json 2> /tmp/scan.log \
+            || { echo "::error::scan failed"; cat /tmp/scan.log; exit 1; }
           cat /tmp/scan.log
 
       # Alert-only input: the table's versions are yt-dlp-master-exact by policy, so drift is a
