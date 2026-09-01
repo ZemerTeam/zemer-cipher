@@ -107,7 +107,10 @@ jobs:
           # ../cipher relative to tests/ (player_configs.json for the cipher, stream_clients.json for
           # the loader). This checkout IS that repo, so point the expected path at the workspace
           # rather than fork the path logic.
-          ln -sfn "$GITHUB_WORKSPACE" harness/cipher
+          # (The sparse checkout materializes the app's `cipher` submodule as an EMPTY directory, so
+          # a bare `ln -s` would land INSIDE it — remove the placeholder first.)
+          rm -rf harness/cipher && ln -s "$GITHUB_WORKSPACE" harness/cipher
+          test -f harness/cipher/library/src/main/assets/player_configs.json
 
       # Whole-song drains of every known client on every validation video, against THIS repo's table
       # (STREAM_CLIENTS_JSON points the loader at the checked-out file, so a branch run scans the
