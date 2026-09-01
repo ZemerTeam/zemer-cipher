@@ -50,20 +50,6 @@
       "loginRequired": true
     },
     {
-      "key": "ANDROID_VR_1_65_10",
-      "clientName": "ANDROID_VR",
-      "clientVersion": "1.65.10",
-      "clientId": "28",
-      "userAgent": "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-      "protocol": "direct",
-      "family": "ANDROID_VR",
-      "osName": "Android",
-      "osVersion": "12L",
-      "deviceMake": "Oculus",
-      "deviceModel": "Quest 3",
-      "androidSdkVersion": "32"
-    },
-    {
       "key": "TVHTML5_SIMPLY",
       "clientName": "TVHTML5_SIMPLY",
       "clientVersion": "1.0",
@@ -71,25 +57,12 @@
       "userAgent": "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)",
       "protocol": "web_cipher_pot",
       "family": "TVHTML5"
-    },
-    {
-      "key": "MWEB",
-      "clientName": "MWEB",
-      "clientVersion": "2.20260708.05.00",
-      "clientId": "2",
-      "userAgent": "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1,gzip(gfe)",
-      "protocol": "web_cipher_pot",
-      "family": "MWEB",
-      "loginSupported": true,
-      "loginRequired": true
     }
   ],
   "families": [
     { "id": "WEB_REMIX", "title": "YouTube Music Web", "group": "web" },
     { "id": "VISIONOS", "title": "visionOS", "group": "native" },
     { "id": "WEB_CREATOR", "title": "YouTube Studio", "group": "creator" },
-    { "id": "ANDROID_VR", "title": "Android VR", "group": "native" },
-    { "id": "TVHTML5", "title": "TVHTML5", "group": "web" },
-    { "id": "MWEB", "title": "Mobile Web", "group": "web" }
+    { "id": "TVHTML5", "title": "TVHTML5", "group": "web" }
   ]
 }

@@ -34,13 +34,11 @@ class StreamClientsBundledAssetTest {
 
     @Test
     fun `bundled chain matches the shipped compiled order`() {
-        // Entry 0 = main. This pins the chain the 2026-08-15 validation pass settled on; a
+        // Entry 0 = main. This pins the chain the 2026-08-15 validation pass settled on (minus
+        // the ANDROID_VR 1.65.10 and MWEB removals that followed - both proven dead on the CDN); a
         // reorder is a deliberate act that updates this test in the same commit.
         assertEquals(
-            listOf(
-                "WEB_REMIX", "VISIONOS", "VISIONOS_0_1", "WEB_CREATOR",
-                "ANDROID_VR_1_65_10", "TVHTML5_SIMPLY", "MWEB",
-            ),
+            listOf("WEB_REMIX", "VISIONOS", "VISIONOS_0_1", "WEB_CREATOR", "TVHTML5_SIMPLY"),
             parsed().config.clients.map { it.key },
         )
     }
@@ -67,7 +65,6 @@ class StreamClientsBundledAssetTest {
     fun `login-required entries are the authenticated cipher fallbacks`() {
         val byKey = parsed().config.clients.associateBy { it.key }
         assertTrue(byKey.getValue("WEB_CREATOR").loginRequired)
-        assertTrue(byKey.getValue("MWEB").loginRequired)
         assertTrue(byKey.getValue("VISIONOS").let { !it.loginRequired && !it.loginSupported })
     }
 }
