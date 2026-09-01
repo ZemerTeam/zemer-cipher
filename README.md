@@ -92,6 +92,43 @@ Run the tests with `./gradlew :library:testDebugUnitTest`. The `config-parity/` 
 shared with the `zemer-app` harness: file-level accept/reject verdicts (and the n-IIFE
 template) are pinned byte-for-byte across both readers.
 
+## Stream clients (`library/src/main/assets/stream_clients.json`)
+
+The second remote table: the YouTube clients the app's stream resolution may use, their fallback
+ORDER (entry 0 = main), per-client flags, which entries the SABR transport may use (`sabr`), and
+the `enabled: false` kill switch. Same deploy model as the player configs — bundled in the APK,
+fetched from this repo's master at runtime (`StreamClientStore`, 6 h TTL, plus a forced refresh
+after a total resolution failure), read by the zemer-app harness (`tests/stream-clients.mjs`), and
+pinned across the two readers by `src/test/resources/stream-clients-parity/`.
+
+### Automated monitoring (`.github/workflows/client-monitor.yml`)
+
+There is no upstream artifact to "scan" for clients the way `player_ias` hashes are scanned, so the
+monitor measures the thing that matters directly: every 3 h it drains a whole song through EVERY
+known client on the validation videos, using the zemer-app harness (`tests/scan-stream-clients.mjs`
+= the same `client-fulldownload.mjs` drain a human runs). The roster is dynamic — the table's live
+entries, its benched entries, and every client the app retired (`tests/clients-retired.mjs`) — and
+each outcome has one response:
+
+| Observation (on every validation video) | Action |
+|---|---|
+| a live entry fails, two consecutive runs | **bench** it (`enabled: false`) and deploy |
+| a benched entry drains whole songs, two consecutive runs | **un-bench** it and deploy |
+| a retired client drains a whole song | issue *Retired client works again* (re-adding is a human, validated table change) |
+| `clientVersion` behind yt-dlp master (`tests/scan-client-versions.mjs`) | issue *version drift* — alert only; a stale version still streaming is not a kill |
+| the MAIN client drained nothing anywhere | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table |
+
+The open detection issues are the pipeline's memory: a client is benched only when its *failing*
+issue was already open (at least `MIN_FLAG_AGE_MINUTES`, default 60) before the run — one bad
+scan can never write. `tools/clients/decide.mjs` holds the rules (`clients.test.mjs`): the main is
+never benched, at least `MIN_LIVE_FALLBACKS` (default 2) live fallbacks must remain, and
+`tools/clients/apply-bench.mjs` — the only writer — edits exactly ONE line, re-parses the result
+with the harness loader and refuses anything else. Deploy is gated by the repository variable
+`AUTO_DEPLOY_CLIENTS` (unset = alert only, `branch`, `master`) with the same read-back-and-revert
+step as the player pipeline; `CLIENT_HARNESS_REF` pins the zemer-app ref that supplies the harness.
+Secrets: `YT_COOKIE` / `YT_VISITOR_DATA` / `YT_DATASYNC_ID` (login-required clients are skipped
+without a cookie) and `VALIDATION_VIDEO_IDS` (variable, comma-separated).
+
 ## Usage
 
 ### Initialization

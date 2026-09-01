@@ -1,0 +1,579 @@
+name: Stream Client Monitor
+
+# The stream-client analog of player-monitor.yml. Devices fetch
+# library/src/main/assets/stream_clients.json from this repo at runtime (6 h TTL, or at once after a
+# total resolution failure), so a commit here IS the deploy. Every few hours this drains EVERY known
+# client on the validation videos through the zemer-app harness — the table's live entries, its
+# benched entries, and every client the app retired — and acts on what it proves:
+#
+#   live entry fails on every video, two runs in a row   -> BENCH it (`enabled: false`), auto-deploy
+#   benched entry drains whole songs, two runs in a row  -> UN-BENCH it, auto-deploy
+#   retired client drains a whole song                   -> issue "works again" (a human re-adds)
+#   clientVersion behind yt-dlp master                   -> issue "version drift" (alert only —
+#                                                           a stale version still streaming is not a kill)
+#   main client drained nothing anywhere                 -> issue "scan inconclusive", NOTHING benched
+#                                                           (the runner/cookie/cipher are suspect, not
+#                                                           the table)
+#
+# Same three-job credential split as the player monitor: scan holds no write token (it runs the
+# untrusted harness: player JS in jsdom, pot minting), alert holds only issues:write, deploy holds
+# the write token and only ever edits ONE line of the file per action (tools/clients/apply-bench.mjs,
+# provably minimal + re-parsed with the app's own rules), then reads the deploy back and reverts a
+# proven bad write. Deploy is OFF unless the repository variable AUTO_DEPLOY_CLIENTS is set:
+#   (unset) — scan, alert, plan; write nothing.                       <- default
+#   branch  — commit onto the branch the run was triggered from (burn-in on a feature branch)
+#   master  — commit straight to master (the live deploy)
+# CLIENT_HARNESS_REF (variable) pins which zemer-app ref supplies the harness (default main; set it
+# to the feature branch while the harness scripts are still only there).
+
+"on":
+  schedule:
+    # Every 3 h (GitHub only runs `schedule` from the DEFAULT branch, so this activates on merge).
+    # Two consecutive failing runs are the bench quorum, so a kill is benched ~3-6 h after it starts;
+    # the player monitor's */20 cadence is not needed — client kills are rare and version-keyed.
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [client-cron]
+  push:
+    # Exercise the pipeline on its own feature branch before merge (deploy inert until the variable
+    # is set; `branch` mode then commits back here, never to master).
+    branches: ['feat/remote-stream-clients']
+
+# Serialize: two overlapping runs must not both see "no open issue" and both open one, or both try
+# to bench the same entry. Queue, don't cancel, so an in-progress deploy finishes cleanly.
+concurrency:
+  group: stream-client-monitor
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  HARNESS_REPO: ZemerTeam/zemer-app
+  CONFIG_PATH: library/src/main/assets/stream_clients.json
+
+jobs:
+  # The pure decision + write rules (dead/revived classification, bench quorum, minimum live
+  # fallbacks, the one-line edit invariants) stand between a scan and every device's chain — run
+  # their tests FIRST and gate the pipeline on them. Node builtins only.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run client tools unit tests
+        run: node --test tools/clients/clients.test.mjs
+
+  scan:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions: {}
+    outputs:
+      action_count: ${{ steps.preplan.outputs.action_count }}
+      summary: ${{ steps.preplan.outputs.summary }}
+      conclusive: ${{ steps.preplan.outputs.conclusive }}
+    steps:
+      - name: Checkout zemer-cipher
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The drain is the zemer-app harness (tests/scan-stream-clients.mjs) — the SAME check a human
+      # runs with client-fulldownload.mjs, deliberately not copied here. zemer-app is public.
+      - name: Checkout validation harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install harness dependencies
+        run: npm ci --prefix harness/tests
+
+      # Whole-song drains of every known client on every validation video, against THIS repo's table
+      # (STREAM_CLIENTS_JSON points the loader at the checked-out file, so a branch run scans the
+      # branch's table). The cookie makes login-required clients conclusive and lifts the datacenter
+      # bot gate; without it those clients are skipped (inconclusive, never dead). Non-zero exit
+      # means the committed table itself is invalid — devices would reject it, so red is correct.
+      - name: Drain every known client
+        id: scan
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
+          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
+        run: |
+          STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
+            node harness/tests/scan-stream-clients.mjs > /tmp/scan.json 2> /tmp/scan.log
+          cat /tmp/scan.log
+
+      # Alert-only input: the table's versions are yt-dlp-master-exact by policy, so drift is a
+      # to-do, never a kill signal. A fetch failure must not fail the scan.
+      - name: Compare client versions with yt-dlp master
+        continue-on-error: true
+        run: |
+          STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
+            node harness/tests/scan-client-versions.mjs > /tmp/drift.json || echo '{"drift":[]}' > /tmp/drift.json
+
+      # A first pass with no issue history: decides whether ANYTHING needs the alert job at all
+      # (dead / revived / resurrected / drift / inconclusive). The bench quorum needs the open-issue
+      # history, which only the alert job (issues:read) can see, so the real plan runs there.
+      - name: Pre-plan (is there anything to act on?)
+        id: preplan
+        run: node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json
+
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-scan
+          path: |
+            /tmp/scan.json
+            /tmp/drift.json
+            /tmp/scan.log
+          retention-days: 14
+
+  # Issues are the pipeline's MEMORY: a "failing" issue open from a previous run is what promotes a
+  # dead client to a bench (and a "revived" issue to an un-bench) — one bad scan can never write.
+  alert:
+    needs: scan
+    if: needs.scan.outputs.action_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    outputs:
+      bench: ${{ steps.plan.outputs.bench }}
+      unbench: ${{ steps.plan.outputs.unbench }}
+      dead: ${{ steps.plan.outputs.dead }}
+      healthy: ${{ steps.plan.outputs.healthy }}
+      revived: ${{ steps.plan.outputs.revived }}
+      resurrected: ${{ steps.plan.outputs.resurrected }}
+      drift: ${{ steps.plan.outputs.drift }}
+      refused: ${{ steps.plan.outputs.refused }}
+      conclusive: ${{ steps.plan.outputs.conclusive }}
+      summary: ${{ steps.plan.outputs.summary }}
+    env:
+      GMAIL_USER: ${{ secrets.GMAIL_USERNAME }}
+    steps:
+      - name: Checkout zemer-cipher
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-scan
+          path: /tmp
+
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      # Which clients were ALREADY flagged by an older run: an open "failing"/"revived" issue at
+      # least MIN_FLAG_AGE_MINUTES old (default 60 — a manual re-run minutes after the first must not
+      # count as the second consecutive sighting). Dedup is by exact title across ALL open issues.
+      - name: Read the open detection issues
+        id: flagged
+        uses: actions/github-script@v7
+        env:
+          MIN_FLAG_AGE_MINUTES: ${{ vars.MIN_FLAG_AGE_MINUTES }}
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const minAgeMs = Number(process.env.MIN_FLAG_AGE_MINUTES || 60) * 60 * 1000;
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
+            });
+            const aged = open.filter((i) => Date.now() - new Date(i.created_at).getTime() >= minAgeMs);
+            const pick = (re, list) => list.map((i) => (i.title.match(re) || [])[1]).filter(Boolean);
+            const failing = pick(/^Stream client failing: ([A-Z0-9_]{1,32})$/, aged);
+            const revived = pick(/^Stream client revived: ([A-Z0-9_]{1,32})$/, aged);
+            core.setOutput('failing', failing.join(' '));
+            core.setOutput('revived', revived.join(' '));
+            core.setOutput('open_titles', JSON.stringify(open.map((i) => [i.number, i.title])));
+            console.log(`previously flagged failing: ${failing.join(' ') || '-'}; revived: ${revived.join(' ') || '-'}`);
+
+      - name: Plan
+        id: plan
+        env:
+          MIN_LIVE_FALLBACKS: ${{ vars.MIN_LIVE_FALLBACKS }}
+          FLAGGED: ${{ steps.flagged.outputs.failing }}
+          FLAGGED_REVIVED: ${{ steps.flagged.outputs.revived }}
+        run: |
+          node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json \
+            --flagged "$FLAGGED" --flagged-revived "$FLAGGED_REVIVED" | tee /tmp/plan.json
+
+      - name: Open or update detection issues
+        uses: actions/github-script@v7
+        env:
+          OPEN_TITLES: ${{ steps.flagged.outputs.open_titles }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const fs = require('fs');
+            const plan = JSON.parse(fs.readFileSync('/tmp/plan.json', 'utf8'));
+            const scan = JSON.parse(fs.readFileSync('/tmp/scan.json', 'utf8'));
+            const drift = JSON.parse(fs.readFileSync('/tmp/drift.json', 'utf8'));
+            const open = new Map(JSON.parse(process.env.OPEN_TITLES || '[]').map(([n, t]) => [t, n]));
+            const mode = process.env.DEPLOY_MODE || '(disabled)';
+            const run = process.env.RUN_URL;
+            const reasons = (key) => (scan.clients.find((c) => c.key === key)?.results || [])
+              .map((r) => `- \`${r.video}\`: ${r.kind}${r.reason ? ' — ' + r.reason : ''}`).join('\n');
+            const upsert = async (title, body, comment) => {
+              if (open.has(title)) {
+                await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: open.get(title), body: comment });
+                console.log(`updated #${open.get(title)}: ${title}`);
+              } else {
+                const { data } = await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body, labels: ['stream-clients'] });
+                console.log(`opened #${data.number}: ${title}`);
+              }
+            };
+            for (const key of plan.dead) {
+              const benched = plan.bench.includes(key);
+              const refusal = (plan.refused.find((r) => r.key === key) || {}).reason || 'see plan';
+              await upsert(`Stream client failing: ${key}`,
+                [`## Stream client \`${key}\` fails every validation video`, '', reasons(key), '',
+                 `Benched automatically on the NEXT run if it is still failing (deploy mode: \`${mode}\`). Devices pick a bench up within 6 h, or at once after a total resolution failure.`, '', `Run: ${run}`].join('\n'),
+                benched ? `Still failing — **benching now** (deploy mode \`${mode}\`).\n\n${reasons(key)}\n\nRun: ${run}`
+                        : `Still failing on this run (not benched: ${refusal}).\n\n${reasons(key)}\n\nRun: ${run}`);
+            }
+            for (const key of plan.revived) {
+              await upsert(`Stream client revived: ${key}`,
+                [`## Benched entry \`${key}\` drains whole songs again`, '', reasons(key), '', `Un-benched automatically on the NEXT run if still whole (deploy mode: \`${mode}\`).`, '', `Run: ${run}`].join('\n'),
+                plan.unbench.includes(key) ? `Still whole — **un-benching now** (deploy mode \`${mode}\`).\n\nRun: ${run}` : `Still whole on this run.\n\nRun: ${run}`);
+            }
+            for (const key of plan.resurrected) {
+              await upsert(`Retired client works again: ${key}`,
+                [`## Retired client \`${key}\` drained a whole song`, '', reasons(key), '', 'The app removed this client as dead. Re-adding it is a validated table change (`node tests/validate-stream-clients.mjs` against a candidate file) — never automatic.', '', `Run: ${run}`].join('\n'),
+                `Still working on this run.\n\nRun: ${run}`);
+            }
+            for (const d of drift.drift || []) {
+              await upsert(`Stream client version drift: ${d.key}`,
+                [`## \`${d.key}\` is behind yt-dlp master`, '', `- table: \`${d.ours}\``, `- yt-dlp \`${d.ytdlpKey}\`: \`${d.ytdlp}\``, '', 'Alert only: the entry still drains whole songs. Bump it via a validated table change when convenient.', '', `Run: ${run}`].join('\n'),
+                `Still drifted: table \`${d.ours}\`, yt-dlp \`${d.ytdlp}\`.\n\nRun: ${run}`);
+            }
+            if (!plan.conclusive) {
+              await upsert('Stream client scan inconclusive',
+                ['## The main client drained no whole song on any validation video', '', 'Nothing was benched — the runner, cookie, or cipher is suspect, not the table. Check the cookie secrets, `VALIDATION_VIDEO_IDS`, and the scan log artifact.', '', `Run: ${run}`].join('\n'),
+                `Still inconclusive.\n\nRun: ${run}`);
+            }
+
+      - name: Send email notification
+        if: ${{ !cancelled() && env.GMAIL_USER != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "Stream client monitor: action needed"
+          to: dietdroidwp@gmail.com
+          from: Zemer CI <${{ secrets.GMAIL_USERNAME }}>
+          body: |
+            ${{ steps.plan.outputs.summary }}
+
+            Benching now:    ${{ steps.plan.outputs.bench }}
+            Un-benching now: ${{ steps.plan.outputs.unbench }}
+            Refused:         ${{ steps.plan.outputs.refused }}
+            Deploy mode:     ${{ vars.AUTO_DEPLOY_CLIENTS }}
+
+            Issues: https://github.com/${{ github.repository }}/issues
+
+  deploy:
+    needs: [scan, alert]
+    if: >-
+      (needs.alert.outputs.bench != '' || needs.alert.outputs.unbench != '') &&
+      (vars.AUTO_DEPLOY_CLIENTS == 'branch' || vars.AUTO_DEPLOY_CLIENTS == 'master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      applied: ${{ steps.apply.outputs.applied }}
+      target: ${{ steps.branch.outputs.target }}
+      sha: ${{ steps.push.outputs.sha }}
+      verified: ${{ steps.verify.outputs.verified }}
+    steps:
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      # persist-credentials:false keeps the write token out of .git/config while ./gradlew runs
+      # third-party plugins in this job; the token is supplied only at the final push/readback.
+      - name: Checkout deploy target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.AUTO_DEPLOY_CLIENTS == 'master' && 'master' || github.ref_name }}
+          token: ${{ steps.bot.outputs.token }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Refuse to write to master in branch mode
+        if: vars.AUTO_DEPLOY_CLIENTS == 'branch' && github.ref_name == 'master'
+        run: |
+          echo "::error::AUTO_DEPLOY_CLIENTS=branch but this run was triggered from master — refusing to write"
+          exit 1
+
+      # Only the loader (node builtins) is imported here — no npm install in the token-holding job.
+      - name: Checkout validation harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Configure commit identity
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          APP_SLUG: ${{ steps.bot.outputs.app-slug }}
+        run: |
+          if [ -z "$APP_SLUG" ]; then
+            echo "::error::no Zemer-Dude App token — refusing to commit under any other identity"
+            exit 1
+          fi
+          uid="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "Zemer-Dude"
+          git config user.email "${uid}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+      - name: Resolve deploy target
+        id: branch
+        run: |
+          TARGET="${{ vars.AUTO_DEPLOY_CLIENTS == 'master' && 'master' || github.ref_name }}"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "committing to '$TARGET' (base $(git rev-parse --short HEAD))"
+
+      # One commit per action, each a ONE-LINE edit re-parsed with the app's rules (apply-bench.mjs
+      # refuses anything else: the main client, a chain below the minimum live fallbacks, a second
+      # changed line). [skip ci] is load-bearing: App-token pushes re-trigger workflows.
+      - name: Apply benches and un-benches
+        id: apply
+        env:
+          BENCH: ${{ needs.alert.outputs.bench }}
+          UNBENCH: ${{ needs.alert.outputs.unbench }}
+        run: |
+          noop() { echo "$1" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(JSON.parse(s).noop)))"; }
+          APPLIED=""
+          for KEY in $BENCH; do
+            echo "::group::bench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness) || { echo "$OUT"; echo "::error::bench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY already benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): bench $KEY - failed the whole-song drain on consecutive scans [skip ci]"
+            APPLIED="$APPLIED bench:$KEY"
+            echo "::endgroup::"
+          done
+          for KEY in $UNBENCH; do
+            echo "::group::un-bench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness --unbench) || { echo "$OUT"; echo "::error::un-bench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY not benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): un-bench $KEY - drains whole songs again on consecutive scans [skip ci]"
+            APPLIED="$APPLIED unbench:$KEY"
+            echo "::endgroup::"
+          done
+          echo "applied=$(echo $APPLIED | xargs)" >> "$GITHUB_OUTPUT"
+
+      # The app's real parser on the exact bytes about to be pushed (StreamClientsBundledAssetTest
+      # accepts a benched entry but refuses a reorder, an addition or a benched main).
+      - name: Parser parity gate
+        if: steps.apply.outputs.applied != ''
+        run: ./gradlew --no-daemon :library:test
+
+      - name: Push
+        id: push
+        if: steps.apply.outputs.applied != ''
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+        run: |
+          git push "https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}" "HEAD:${TARGET}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Read the deployed file back over the GIT protocol (immediately consistent; the contents API
+      # and raw.githubusercontent lag and once caused a good deploy to be rolled back). A failed
+      # READ is never proof of a bad deploy — only a cleanly read file that lacks the change is.
+      - name: Verify deployed file
+        id: verify
+        if: steps.apply.outputs.applied != ''
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+          APPLIED: ${{ steps.apply.outputs.applied }}
+        run: |
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          read_ok=""
+          for attempt in 1 2 3 4 5; do
+            if git fetch --no-tags --force "$REMOTE" "$TARGET" 2>/tmp/git.err \
+               && git show "FETCH_HEAD:$CONFIG_PATH" > /tmp/deployed.json 2>/dev/null \
+               && [ -s /tmp/deployed.json ] && node -e 'JSON.parse(require("fs").readFileSync("/tmp/deployed.json","utf8"))' 2>/dev/null; then
+              read_ok=1; break
+            fi
+            echo "::warning::git read-back attempt $attempt failed: $(head -c 160 /tmp/git.err 2>/dev/null)"
+            sleep $((attempt * 5))
+          done
+          if [ -z "$read_ok" ]; then
+            echo "::warning::could not read back the deployed file — the push landed, treating as UNVERIFIED, not reverting"
+            echo "verified=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          WRONG=$(node -e '
+            const d = JSON.parse(require("fs").readFileSync("/tmp/deployed.json", "utf8"));
+            const bad = [];
+            for (const a of process.argv[1].split(/\s+/).filter(Boolean)) {
+              const [op, key] = a.split(":");
+              const e = (d.clients || []).find((c) => c && c.key === key);
+              const benched = Boolean(e) && e.enabled === false;
+              if (!e || (op === "bench") !== benched) bad.push(a);
+            }
+            process.stdout.write(bad.join(","));
+          ' "$APPLIED")
+          if [ -n "$WRONG" ]; then
+            echo "::error::deployed file does not carry: $WRONG — rolling back"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "verified $APPLIED on $TARGET"
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      - name: Revert on proven bad deploy
+        if: always() && steps.verify.outputs.verified == 'false'
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+          BASE_SHA: ${{ steps.branch.outputs.base_sha }}
+        run: |
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          for attempt in 1 2 3; do
+            git revert --no-edit --no-commit "${BASE_SHA}..HEAD" 2>/dev/null || true
+            git commit -m "revert: roll back failed stream-client deploy [skip ci]" 2>/dev/null || true
+            if git push "$REMOTE" "HEAD:${TARGET}"; then
+              echo "::error::rolled back the bad deploy to ${BASE_SHA}"
+              exit 0
+            fi
+            echo "::warning::rollback push failed (attempt $attempt) — refetching $TARGET and retrying"
+            git fetch "$REMOTE" "$TARGET" && git reset --hard FETCH_HEAD
+          done
+          exit 1
+
+  notify:
+    needs: [scan, alert, deploy]
+    if: always() && needs.scan.outputs.action_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      # Close what master has resolved: a "failing" issue whose entry is now benched on master or
+      # drained whole songs this run; a "revived" issue whose entry is live again on master.
+      - name: Close resolved detection issues
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          HEALTHY: ${{ needs.alert.outputs.healthy }}
+        run: |
+          gh api "repos/$REPO/contents/$CONFIG_PATH?ref=master" --jq '.content' 2>/dev/null | base64 -d > /tmp/master.json || { echo "::warning::could not read master table"; exit 0; }
+          BENCHED=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled===false).map(c=>c.key).join(" "))')
+          LIVE=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled!==false).map(c=>c.key).join(" "))')
+          close() { gh api --method POST "repos/$REPO/issues/$1/comments" -f body="$2" >/dev/null || true; gh api --method PATCH "repos/$REPO/issues/$1" -f state=closed >/dev/null && echo "closed #$1"; }
+          gh issue list --repo "$REPO" --state open --limit 100 --json number,title \
+            --jq '.[] | select(.title | test("^Stream client (failing|revived): [A-Z0-9_]{1,32}$")) | [.number, .title] | @tsv' \
+          | while IFS=$'\t' read -r NUM TITLE; do
+              KEY="${TITLE##*: }"
+              case "$TITLE" in
+                "Stream client failing: "*)
+                  case " $BENCHED " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is benched on master${SHA:+ ($SHA)}. Devices pick it up within 6 h." ; continue ;; esac
+                  case " $HEALTHY " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` drained whole songs again on this run." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
+                "Stream client revived: "*)
+                  case " $LIVE " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is live again on master${SHA:+ ($SHA)}." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
+              esac
+            done
+
+      - name: Send Telegram notification
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          PRIMARY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EXTRA_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
+          THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID }}
+          SUMMARY: ${{ needs.alert.outputs.summary || needs.scan.outputs.summary }}
+          BENCH: ${{ needs.alert.outputs.bench }}
+          UNBENCH: ${{ needs.alert.outputs.unbench }}
+          REFUSED: ${{ needs.alert.outputs.refused }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          APPLIED: ${{ needs.deploy.outputs.applied }}
+          VERIFIED: ${{ needs.deploy.outputs.verified }}
+          TARGET: ${{ needs.deploy.outputs.target }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$BOT_TOKEN" ]; then echo "No TELEGRAM_BOT_TOKEN — skipping Telegram."; exit 0; fi
+          if [ "$DEPLOY_RESULT" = "success" ] && [ -n "$APPLIED" ]; then
+            HEAD_LINE="Stream-client table deployed"
+            ACTION=$(printf "Committed: %s\nBranch: %s\nCommit: %s/commit/%s" "$APPLIED" "$TARGET" "$REPO_URL" "$SHA")
+          elif [ "$DEPLOY_RESULT" = "failure" ] && [ "$VERIFIED" = "false" ]; then
+            HEAD_LINE="Stream-client deploy FAILED — rolled back"
+            ACTION="A commit reached $TARGET, verification found the change missing, and an automatic rollback ran. Confirm the branch is clean. Needs a human."
+          elif [ "$DEPLOY_RESULT" = "failure" ]; then
+            HEAD_LINE="Stream-client deploy FAILED"
+            ACTION="apply-bench or the parity gate refused it; nothing was pushed. Needs a human."
+          elif [ -n "$BENCH$UNBENCH" ]; then
+            HEAD_LINE="Stream-client change planned, NOT deployed"
+            ACTION=$(printf "Auto-deploy is off (AUTO_DEPLOY_CLIENTS=%s). Planned: bench [%s] un-bench [%s]." "${DEPLOY_MODE:-unset}" "$BENCH" "$UNBENCH")
+          else
+            HEAD_LINE="Stream-client monitor: attention"
+            ACTION="Nothing benched this run (first sighting, refused, drift, or an inconclusive scan — see the issues)."
+          fi
+          MESSAGE=$(printf "%s\n\n%s\n\nRefused: %s\n\n%s\n\nRun: %s" "$HEAD_LINE" "$SUMMARY" "${REFUSED:-none}" "$ACTION" "$RUN_URL")
+          RECIPIENTS=$(printf '%s %s' "$PRIMARY_CHAT_ID" "$EXTRA_CHAT_IDS" | tr ',\n' '  ' | tr -s ' ' '\n' | awk 'NF && !seen[$0]++')
+          for CID in $RECIPIENTS; do
+            THREAD_ARG=()
+            if [ -n "$THREAD_ID" ] && [ "$CID" = "$PRIMARY_CHAT_ID" ]; then THREAD_ARG=(-d "message_thread_id=${THREAD_ID}"); fi
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="$CID" "${THREAD_ARG[@]}" --data-urlencode "text=${MESSAGE}"
+          done

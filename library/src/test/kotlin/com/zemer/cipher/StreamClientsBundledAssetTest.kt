@@ -33,14 +33,18 @@ class StreamClientsBundledAssetTest {
     }
 
     @Test
-    fun `bundled chain matches the shipped compiled order`() {
+    fun `bundled chain is the shipped compiled order, minus any benched entry`() {
         // Entry 0 = main. This pins the chain the 2026-08-15 validation pass settled on (minus
-        // the ANDROID_VR 1.65.10 and MWEB removals that followed - both proven dead on the CDN); a
-        // reorder is a deliberate act that updates this test in the same commit.
-        assertEquals(
-            listOf("WEB_REMIX", "VISIONOS", "VISIONOS_0_1", "WEB_CREATOR", "TVHTML5_SIMPLY"),
-            parsed().config.clients.map { it.key },
-        )
+        // the ANDROID_VR 1.65.10 and MWEB removals that followed - both proven dead on the CDN).
+        // A reorder or an addition is a deliberate act that updates this test in the same commit;
+        // a BENCH (`enabled: false`, what the client-monitor workflow commits unattended when a
+        // fallback stops draining whole songs) is not - so the LIVE chain must be this order with
+        // entries removed, never reordered, and the main must survive.
+        val canonical = listOf("WEB_REMIX", "VISIONOS", "VISIONOS_0_1", "WEB_CREATOR", "TVHTML5_SIMPLY")
+        val live = parsed().config.clients.map { it.key }
+        assertEquals("WEB_REMIX", live.first())
+        assertEquals("live chain must be a subsequence of $canonical, got $live", live, canonical.filter { it in live })
+        assertTrue("every live key must be canonical: $live", live.all { it in canonical })
     }
 
     @Test
@@ -48,11 +52,14 @@ class StreamClientsBundledAssetTest {
         // The SABR resolvers offer exactly these, in this order (WEB_REMIX identifies itself as
         // Windows 10.0 in the SABR streamerContext, its /player context stays OS-less). Adding or
         // removing a `sabr` object is a deliberate roster change that updates this test.
-        val sabr = parsed().config.clients.filter { it.sabr != null }
-        assertEquals(listOf("WEB_REMIX", "VISIONOS", "TVHTML5_SIMPLY"), sabr.map { it.key })
+        val sabrEntries = parsed().config.clients.filter { it.sabr != null }
+        val sabr = sabrEntries.map { it.key }
+        val canonical = listOf("WEB_REMIX", "VISIONOS", "TVHTML5_SIMPLY")
+        assertEquals("SABR roster must be a subsequence of $canonical, got $sabr", sabr, canonical.filter { it in sabr })
+        assertEquals("WEB_REMIX", sabr.first())
         assertEquals(
             StreamClientParser.StreamClientDef.SabrInfo(osName = "Windows", osVersion = "10.0"),
-            sabr.first { it.key == "WEB_REMIX" }.sabr,
+            sabrEntries.first { it.key == "WEB_REMIX" }.sabr,
         )
     }
 
