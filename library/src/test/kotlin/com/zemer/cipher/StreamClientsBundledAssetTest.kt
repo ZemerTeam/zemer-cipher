@@ -44,6 +44,19 @@ class StreamClientsBundledAssetTest {
     }
 
     @Test
+    fun `SABR roster is the sabr-capable entries in table order`() {
+        // The SABR resolvers offer exactly these, in this order (WEB_REMIX identifies itself as
+        // Windows 10.0 in the SABR streamerContext, its /player context stays OS-less). Adding or
+        // removing a `sabr` object is a deliberate roster change that updates this test.
+        val sabr = parsed().config.clients.filter { it.sabr != null }
+        assertEquals(listOf("WEB_REMIX", "VISIONOS", "TVHTML5_SIMPLY"), sabr.map { it.key })
+        assertEquals(
+            StreamClientParser.StreamClientDef.SabrInfo(osName = "Windows", osVersion = "10.0"),
+            sabr.first { it.key == "WEB_REMIX" }.sabr,
+        )
+    }
+
+    @Test
     fun `main client is the head-skip web client`() {
         val main = parsed().config.clients[0]
         assertEquals("WEB_REMIX", main.clientName)

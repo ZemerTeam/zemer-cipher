@@ -10,7 +10,8 @@
       "protocol": "web_cipher_pot",
       "family": "WEB_REMIX",
       "loginSupported": true,
-      "skipHeadValidation": true
+      "skipHeadValidation": true,
+      "sabr": { "osName": "Windows", "osVersion": "10.0" }
     },
     {
       "key": "VISIONOS",
@@ -23,7 +24,8 @@
       "osName": "visionOS",
       "osVersion": "26.5.23O471",
       "deviceMake": "Apple",
-      "deviceModel": "RealityDevice17,1"
+      "deviceModel": "RealityDevice17,1",
+      "sabr": {}
     },
     {
       "key": "VISIONOS_0_1",
@@ -56,7 +58,8 @@
       "clientId": "75",
       "userAgent": "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)",
       "protocol": "web_cipher_pot",
-      "family": "TVHTML5"
+      "family": "TVHTML5",
+      "sabr": {}
     }
   ],
   "families": [

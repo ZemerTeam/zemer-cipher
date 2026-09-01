@@ -9,7 +9,8 @@ import kotlinx.serialization.json.jsonArray
 /**
  * Parses and validates the stream-client table JSON (`stream_clients.json`, bundled asset and
  * remote copies) — the remote registry of YouTube clients the app's stream resolution may use,
- * their fallback ORDER (entry 0 is the main client) and per-client behavior flags.
+ * their fallback ORDER (entry 0 is the main client), per-client behavior flags, and which entries
+ * the SABR transport may use (the `sabr` object — the SABR roster is table data too).
  *
  * Pure JVM on purpose (no Android/Timber imports), like [PlayerConfigParser]: the full validation
  * surface is coverable by plain unit tests, and the same accept/reject verdicts are pinned by the
@@ -63,7 +64,25 @@ object StreamClientParser {
         val loginRequired: Boolean = false,
         val isEmbedded: Boolean = false,
         val skipHeadValidation: Boolean = false,
+        /**
+         * Present = this client is SABR-usable (validated to deliver a whole song over the
+         * serverAbrStreamingUrl transport with the app's pot); absent = SABR never tries it. The
+         * SABR roster is the table's sabr-capable entries in TABLE order, so it lives here rather
+         * than in a compiled list. Its fields override the entry's own os/device identity for the
+         * SABR streamerContext.clientInfo only (the `/player` context is untouched) — WEB_REMIX
+         * announces "Windows 10.0" there while its `/player` request carries no OS.
+         */
+        val sabr: SabrInfo? = null,
     ) {
+        /** SABR clientInfo overrides; every field optional (null = inherit the entry's own). */
+        data class SabrInfo(
+            val osName: String? = null,
+            val osVersion: String? = null,
+            val deviceMake: String? = null,
+            val deviceModel: String? = null,
+            val androidSdkVersion: String? = null,
+        )
+
         /**
          * The closed set of compiled-in stream-handling paths. An entry naming a protocol slug
          * outside this set is SKIPPED (forward compat: a future file may carry clients for a
@@ -213,6 +232,7 @@ object StreamClientParser {
         val loginRequired = boolean(obj, "loginRequired") ?: return null
         val isEmbedded = boolean(obj, "isEmbedded") ?: return null
         val skipHeadValidation = boolean(obj, "skipHeadValidation") ?: return null
+        val sabr = parseSabr(obj) ?: return null
 
         return StreamClientDef(
             key = key,
@@ -231,6 +251,36 @@ object StreamClientParser {
             loginRequired = loginRequired,
             isEmbedded = isEmbedded,
             skipHeadValidation = skipHeadValidation,
+            sabr = sabr.value,
+        )
+    }
+
+    /** Wrapper distinguishing "absent" (fine, null) from "present but invalid" (skip entry). */
+    private class OptionalSabr(val value: StreamClientDef.SabrInfo?)
+
+    /**
+     * `sabr`: absent/null = not SABR-usable; an object (possibly empty) = SABR-usable, with the
+     * same optional os/device fields (same shapes) as the entry itself. Anything else — a
+     * boolean, a string, an array — is a malformed entry and skips it, so a typo can never
+     * silently promote a client into (or out of) the SABR roster with an unintended identity.
+     */
+    private fun parseSabr(obj: JsonObject): OptionalSabr? {
+        val element = obj["sabr"]
+        if (element == null || element is JsonNull) return OptionalSabr(null)
+        val sabrObj = element as? JsonObject ?: return null
+        val osName = optionalString(sabrObj, "osName") { headerSafe(it, 64) } ?: return null
+        val osVersion = optionalString(sabrObj, "osVersion") { VERSIONISH_RE.matches(it) } ?: return null
+        val deviceMake = optionalString(sabrObj, "deviceMake") { headerSafe(it, 64) } ?: return null
+        val deviceModel = optionalString(sabrObj, "deviceModel") { headerSafe(it, 64) } ?: return null
+        val androidSdkVersion = optionalString(sabrObj, "androidSdkVersion") { VERSIONISH_RE.matches(it) } ?: return null
+        return OptionalSabr(
+            StreamClientDef.SabrInfo(
+                osName = osName.value,
+                osVersion = osVersion.value,
+                deviceMake = deviceMake.value,
+                deviceModel = deviceModel.value,
+                androidSdkVersion = androidSdkVersion.value,
+            ),
         )
     }
 

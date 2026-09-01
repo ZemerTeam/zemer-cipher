@@ -228,4 +228,30 @@ class StreamClientParserTest {
         ) as ParseResult.Success
         assertEquals(1, result.config.clients.size)
     }
+
+    @Test
+    fun `sabr absent or null means not SABR-usable`() {
+        assertNull(success(file(entry())).clients[0].sabr)
+        assertNull(success(file(entry(extra = """, "sabr": null"""))).clients[0].sabr)
+    }
+
+    @Test
+    fun `sabr object marks the entry SABR-usable with optional identity overrides`() {
+        val empty = success(file(entry(extra = """, "sabr": {}"""))).clients[0].sabr
+        assertEquals(StreamClientDef.SabrInfo(), empty)
+        val overridden = success(
+            file(entry(extra = """, "sabr": {"osName": "Windows", "osVersion": "10.0", "deviceMake": null}""")),
+        ).clients[0].sabr
+        assertEquals(StreamClientDef.SabrInfo(osName = "Windows", osVersion = "10.0"), overridden)
+    }
+
+    @Test
+    fun `a malformed sabr field skips the entry - or rejects the file when it is the main row`() {
+        for (bad in listOf("true", "\"yes\"", "[]", """{"osName": 1}""", """{"osVersion": "bad version!"}""")) {
+            val result = StreamClientParser.parse(file(entry(), entry(key = "B", extra = """, "sabr": $bad""")))
+            assertTrue("sabr=$bad must skip B, got $result", result is ParseResult.Success)
+            assertEquals("sabr=$bad", listOf("B"), (result as ParseResult.Success).skippedEntries)
+            failure(file(entry(extra = """, "sabr": $bad""")))
+        }
+    }
 }
