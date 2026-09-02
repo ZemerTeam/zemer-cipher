@@ -24,8 +24,16 @@ for (const r of runs) {
   let slots = [];
   try { gh("run", "download", String(r.databaseId), "--repo", repo, "-p", "client-scan-slot-*", "-D", dir); } catch {}
   for (const d of readdirSync(dir).sort()) {
-    const e = join(dir, d, "egress.txt");
-    if (existsSync(join(dir, d, "scan.json"))) slots.push(existsSync(e) ? readFileSync(e, "utf8").trim().replace(/slot=(\d+) /, "s$1 ").replace(/ egress=warp| ipv6=1| ip=[^ ]+/g, "") : d);
+    const e = join(dir, d, "egress.txt"), sj = join(dir, d, "scan.json");
+    if (!existsSync(sj)) continue;
+    let ratio = "";
+    try {
+      const s = JSON.parse(readFileSync(sj, "utf8"));
+      const live = s.clients.filter((c) => c.role === "live");
+      const dr = live.flatMap((c) => c.results), sr = live.flatMap((c) => c.sabrResults || []);
+      ratio = ` direct ${dr.filter((r) => r.kind === "whole").length}/${dr.length} sabr ${sr.filter((r) => r.kind === "whole").length}/${sr.length}`;
+    } catch {}
+    slots.push((existsSync(e) ? readFileSync(e, "utf8").trim().replace(/slot=(\d+) /, "s$1 ").replace(/ egress=warp| ipv6=1| ip=[^ ]+| runner=ubuntu-/g, "") : d) + ratio);
   }
   let verdict = "no verified slot", fails = [];
   const merged = join(dir, "merged");
