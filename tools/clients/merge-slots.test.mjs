@@ -21,6 +21,19 @@ test("a whole song from any slot wins; a failure needs every slot to fail; mixed
   assert.equal(m.conclusive, true); assert.equal(m.sabrConclusive, true); assert.equal(m.mainHealthy, true); assert.equal(m.mergedSlots, 2);
 });
 
+test("a slot whose post-check failed contributes only its whole songs, never its failures", () => {
+  const flipped = { ...scan([{ key: "A", main: true, results: [r("a", "whole"), r("b", "partial", "403 after 0KB")], sabrResults: [r("a", "partial")] }]), postcheckClean: false };
+  const clean = scan([{ key: "A", main: true, results: [r("a", "error", "timeout"), r("b", "error", "timeout")], sabrResults: [r("a", "error")] }]);
+  const m = mergeScans([flipped, clean]);
+  const A = m.clients[0];
+  assert.deepEqual(A.results.map((x) => x.kind), ["whole", "error"], "the flipped slot's whole counts, its partial does not");
+  assert.equal(A.sabrResults[0].kind, "error");
+  assert.equal(m.trustedSlots, 1); assert.equal(m.mergedSlots, 2);
+  // A flipped slot alone with only failures merges to no results at all (nothing to judge).
+  const only = mergeScans([{ ...scan([{ key: "B", results: [r("a", "partial")], sabrResults: [] }]), postcheckClean: false }]);
+  assert.deepEqual(only.clients[0].results, []);
+});
+
 test("a single slot merges to itself; clients missing from a slot keep the others' evidence", () => {
   const one = scan([{ key: "A", main: true, results: [r("a", "whole")], sabrResults: [] }]);
   assert.deepEqual(mergeScans([one]).clients[0].results.map((x) => x.kind), ["whole"]);

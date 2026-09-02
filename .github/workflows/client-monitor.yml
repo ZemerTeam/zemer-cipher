@@ -299,6 +299,7 @@ jobs:
       - name: Compare client identity with yt-dlp master
         continue-on-error: true
         run: |
+          echo '[]' > /tmp/bumps.json
           STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
             node harness/tests/scan-client-versions.mjs > /tmp/drift.json || echo '{"drift":[]}' > /tmp/drift.json
 
@@ -306,6 +307,7 @@ jobs:
       # result) is a verified bump. The verdicts are recorded per entry so the alert can say WHY a
       # drift was not bumped (bot-gated runner, partial drain, ...).
       - name: Propose and verify identity bumps
+        if: ${{ matrix.slot <= 2 }}
         env:
           YT_COOKIE: ${{ secrets.YT_COOKIE }}
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
@@ -364,14 +366,21 @@ jobs:
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
           STREAM_CLIENTS_JSON: ${{ github.workspace }}/library/src/main/assets/stream_clients.json
         run: |
-          if QUICK=1 node harness/tests/probe-bot-gate.mjs; then echo "clean=true" >> "$GITHUB_OUTPUT"; else
-            echo "::warning::slot ${{ matrix.slot }}: egress NOT clean after the drains - discarding this slot's results"
-            echo "clean=false" >> "$GITHUB_OUTPUT"; exit 1
+          # A slot whose egress is no longer clean AFTER the drains is only PARTIALLY trusted: its
+          # whole songs are real evidence (they happened), its failures may be the tunnel's. The
+          # flag rides in scan.json; merge-slots keeps only the whole verdicts of such a slot.
+          if QUICK=1 node harness/tests/probe-bot-gate.mjs; then
+            node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/scan.json","utf8"));s.postcheckClean=true;fs.writeFileSync("/tmp/scan.json",JSON.stringify(s,null,2))'
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::slot ${{ matrix.slot }}: egress NOT clean after the drains - only this slot's whole songs will count"
+            node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/scan.json","utf8"));s.postcheckClean=false;fs.writeFileSync("/tmp/scan.json",JSON.stringify(s,null,2))'
+            echo "clean=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Record the egress this slot drained through
         run: |
-          echo "slot=${{ matrix.slot }} runner=${{ matrix.runner }} egress=warp ipv6=${FORCE_IPV6:-0} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
+          echo "slot=${{ matrix.slot }} runner=${{ matrix.runner }} egress=warp ipv6=${FORCE_IPV6:-0} postcheck=${{ steps.postcheck.outputs.clean || 'n/a' }} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
           cat /tmp/egress.txt
 
       - name: Disconnect WARP egress
