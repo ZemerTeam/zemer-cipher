@@ -22,6 +22,21 @@ test("a whole song from any slot wins; a failure needs every slot to fail; mixed
   assert.equal(m.conclusive, true); assert.equal(m.sabrConclusive, true); assert.equal(m.mainHealthy, true); assert.equal(m.mergedSlots, 2);
 });
 
+test("two definitive slots outvote a lone inconclusive one; a lone definitive slot does not decide", () => {
+  const m = mergeScans([
+    scan([{ key: "X", results: [r("a", "partial", "403")], sabrResults: [] }]),
+    scan([{ key: "X", results: [r("a", "error", "reset")], sabrResults: [] }]),
+    scan([{ key: "X", results: [r("a", "partial", "403")], sabrResults: [] }]),
+  ]);
+  assert.equal(m.clients[0].results[0].kind, "partial"); assert.equal(m.clients[0].results[0].agree, 2);
+  const lone = mergeScans([
+    scan([{ key: "X", results: [r("a", "partial", "403")], sabrResults: [] }]),
+    scan([{ key: "X", results: [r("a", "error", "reset")], sabrResults: [] }]),
+    scan([{ key: "X", results: [r("a", "bot-gated")], sabrResults: [] }]),
+  ]);
+  assert.equal(lone.clients[0].results[0].kind, "error"); assert.match(lone.clients[0].results[0].reason, /slots disagree/);
+});
+
 test("a slot whose post-check failed contributes only its whole songs, never its failures", () => {
   const flipped = { ...scan([{ key: "A", main: true, results: [r("a", "whole"), r("b", "partial", "403 after 0KB")], sabrResults: [r("a", "partial")] }]), postcheckClean: false };
   const clean = scan([{ key: "A", main: true, results: [r("a", "error", "timeout"), r("b", "error", "timeout")], sabrResults: [r("a", "error")] }]);

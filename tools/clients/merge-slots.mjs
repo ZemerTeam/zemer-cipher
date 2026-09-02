@@ -25,8 +25,12 @@ function mergeResults(lists, trusted) {
   for (const [video, rs] of byVideo) {
     const whole = rs.find((r) => r.kind === "whole");
     if (whole) { out.push({ ...whole, slots: rs.length, agree: rs.filter((r) => r.kind === "whole").length }); continue; }
-    if (rs.every((r) => DEFINITIVE.has(r.kind))) { out.push({ ...rs[0], slots: rs.length, agree: rs.length }); continue; }
-    // Mixed definitive + inconclusive, or all inconclusive: report the inconclusive one (never a kill).
+    // No whole song anywhere. A definitive failure needs INDEPENDENT agreement: every slot, or at
+    // least two slots, failed definitively - then a lone inconclusive slot (a tunnel hiccup, a
+    // gated request) cannot veto the verdict. One definitive slot alone stays inconclusive.
+    const definitive = rs.filter((r) => DEFINITIVE.has(r.kind));
+    if (definitive.length === rs.length || definitive.length >= 2) { out.push({ ...definitive[0], slots: rs.length, agree: definitive.length }); continue; }
+    // A single definitive slot among inconclusives, or all inconclusive: report the inconclusive one (never a kill).
     const inc = rs.find((r) => !DEFINITIVE.has(r.kind)) || rs[0];
     out.push({ ...inc, slots: rs.length, agree: rs.filter((r) => r.kind === inc.kind).length, reason: `${inc.reason || inc.kind} (slots disagree: ${rs.map((r) => r.kind).join("/")})` });
   }
