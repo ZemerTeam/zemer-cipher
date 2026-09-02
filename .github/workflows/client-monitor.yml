@@ -204,10 +204,14 @@ jobs:
             TRACE=$(curl -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo|ip)=' | tr '\n' ' ')
             # IPv6 egress on purpose: WARP's shared IPv4 pool answered UNPLAYABLE where the same
             # colo's v6 passed (probe 2026-09-02, SJC), so v4 is never tried here.
-            if QUICK=1 node harness/tests/probe-bot-gate.mjs; then
+            # Clean AND stable: youtube.com reachable, then two app-exact anonymous /player probes
+            # a few seconds apart (a fresh tunnel that flaps or is still settling fails here, not
+            # in the middle of the drains).
+            if curl -s --max-time 20 -o /dev/null https://www.youtube.com/iframe_api \
+               && QUICK=1 node harness/tests/probe-bot-gate.mjs && sleep 5 && QUICK=1 node harness/tests/probe-bot-gate.mjs; then
               echo "egress attempt $attempt OK: $TRACE"; ok=1; break
             fi
-            echo "::warning::egress attempt $attempt not clean ($TRACE) - re-rolling"
+            echo "::warning::egress attempt $attempt not clean/stable ($TRACE) - re-rolling"
           done
           if [ -z "$ok" ]; then
             echo "::warning::no WARP egress passed the bot gate after ${EGRESS_ATTEMPTS:-6} attempts on this runner"
