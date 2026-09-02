@@ -17,7 +17,9 @@ import { benchEntryText, unbenchEntryText, verifyBench, verifyUnbench, benchSabr
 import { bumpEntryText, verifyBump } from "./apply-bump.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const { parseStreamClients } = await import(pathToFileURL(path.resolve(HERE, "../../../tests/stream-clients.mjs")).href);
+// The harness loader: the zemer-app checkout next to this repo (submodule layout) or HARNESS_DIR (CI).
+const HARNESS = process.env.HARNESS_DIR || path.resolve(HERE, "../../..");
+const { parseStreamClients } = await import(pathToFileURL(path.join(HARNESS, "tests/stream-clients.mjs")).href);
 const parse = (t) => parseStreamClients(t);
 
 // ---- a pipeline "world": table text + issue memory, advanced one run at a time -----------------

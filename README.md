@@ -121,6 +121,8 @@ each outcome has one response:
 | an entry's identity (clientVersion, userAgent, os/device) is behind yt-dlp master (`tests/scan-client-versions.mjs`, per the entry's `mirrors` key) | **bump** it: the entry is copied into a candidate table with yt-dlp's values (`tools/clients/apply-bump.mjs --out`), the candidate must drain a whole song on EVERY validation video, then it deploys; an unverified candidate only opens an *identity drift* issue with the reason |
 | no client at all drained a whole song | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table (a dead MAIN with healthy fallbacks is reported as dead — a human decision — and its yt-dlp bump can revive it) |
 | "Sign in to confirm you're not a bot" on an anonymous request | `bot-gated` = INCONCLUSIVE (the runner's IP, not the client): never a kill, never a bench, never a verified bump |
+| a sign-in demand for a client that WAS sent the cookie | `auth-failed` = INCONCLUSIVE (the session expired/revoked, not the client) + issue *cookie expired or revoked* — refresh `YT_COOKIE`; nothing benched on its account |
+| every anonymous client fails while every cookie client drains whole | *anonymous egress suspect*: the runner, not three simultaneous deaths — inconclusive, alerted, nothing benched |
 
 An identity bump of a `sabr`-capable entry must drain whole songs over BOTH transports before it
 deploys. The open detection issues are the pipeline's memory: a client is benched only when its *failing*
@@ -146,9 +148,12 @@ residential-grade egress do the login-less clients get the app's own results. WA
 by colo (ORD, DFW, LAX passed; IAD was gated), so the step VERIFIES the egress with one app-exact
 anonymous `/player` (`probe-bot-gate.mjs` `QUICK=1`) and re-rolls the registration — alternating
 the tunnel protocol — up to `EGRESS_ATTEMPTS` (default 2) times until it passes (IPv6 only: WARP's
-IPv4 pool answered UNPLAYABLE where the same colo's v6 passed). The scan runs as FOUR parallel egress
-slots (four runners, four regions, four colos): only a slot whose egress verified drains, and
-`collect` takes the first verified result - one gated colo no longer costs a run. If no slot
+IPv4 pool answered UNPLAYABLE where the same colo's v6 passed). The scan runs as SIX parallel egress
+slots (six runners, six regions, six colos): only a slot whose egress verified - before AND
+after its drains, with a `/player` plus a CDN range - drains, and `collect` MERGES every verified
+slot (`tools/clients/merge-slots.mjs`): a whole song from any clean egress proves a client works, a
+failure counts only when every clean egress agrees, so a false death needs every independent egress
+to be wrong at once. One gated colo no longer costs a run. If no slot
 verifies, the workflow re-dispatches itself on fresh runners, up to `MAX_RUNNER_ATTEMPTS`
 (default 4) sets. A bot-gated verdict is
 never accepted: either the egress is proven clean before a single drain, or the cycle ends with an

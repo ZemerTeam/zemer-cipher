@@ -162,3 +162,4 @@ export const sabrRevivedTitle = (key) => `Stream client SABR revived: ${key}`;
 export const SABR_REVIVED_TITLE_RE = /^Stream client SABR revived: ([A-Z0-9_]{1,32})$/;
 export const driftTitle = (key) => `Stream client identity drift: ${key}`;
 export const INCONCLUSIVE_TITLE = "Stream client scan inconclusive";
+export const COOKIE_TITLE = "Stream client scan: cookie expired or revoked";

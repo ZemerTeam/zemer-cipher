@@ -81,6 +81,12 @@ module.exports = async function syncIssues({ github, context, core, mode }) {
        "", `Run: ${run}`].join("\n"),
       `${verified ? "Verified but not deployed (auto-deploy off)" : "Still not verified: " + (d.verify || "no result")}.\n\nRun: ${run}`);
   }
+  const authFailed = scan.clients.filter((c) => (c.role || "live") === "live" && [...(c.results || []), ...(c.sabrResults || [])].some((r) => r.kind === "auth-failed")).map((c) => c.key);
+  if (authFailed.length) {
+    await upsert(decide.COOKIE_TITLE,
+      [`## The session cookie no longer authenticates`, "", `${authFailed.join(", ")} answered a sign-in demand although the cookie was sent. Refresh the \`YT_COOKIE\` / \`YT_VISITOR_DATA\` secrets (dump a fresh session). Until then the login clients are inconclusive - nothing is benched on their account.`, "", `Run: ${run}`].join("\n"),
+      `Still failing to authenticate (${authFailed.join(", ")}).\n\nRun: ${run}`);
+  }
   if (!plan.conclusive) {
     await upsert(decide.INCONCLUSIVE_TITLE,
       ["## No client drained a whole song on any validation video", "", "Nothing was benched — the runner, cookie, or cipher is suspect, not the table. Check the cookie secrets, `SCAN_PROXY`, `VALIDATION_VIDEO_IDS`, and the scan log artifact.", "", `Run: ${run}`].join("\n"),

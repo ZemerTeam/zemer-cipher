@@ -122,15 +122,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # The scenario simulator parses with the zemer-app harness loader (node builtins only, no
+      # install): the same rules a device applies.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness-tests
+          sparse-checkout: tests
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - name: Run client tools unit tests
-        run: node --test tools/clients/clients.test.mjs
+        env:
+          HARNESS_DIR: ${{ github.workspace }}/harness-tests
+        run: node --test tools/clients/clients.test.mjs tools/clients/merge-slots.test.mjs tools/clients/simulate.test.mjs
 
   # EGRESS SLOTS: the same scan on several runners AT ONCE. WARP's colo follows the runner's
   # region and does not change when WARP re-registers (an IAD runner re-rolled six IAD addresses,
-  # all gated), so one runner is a coin flip - four independent runners almost never all land on
+  # all gated), so one runner is a coin flip - six independent runners almost never all land on
   # a gated colo. Each slot proves its own egress before a single drain; only verified slots drain
   # and upload; `collect` takes the first verified result. Costs no wall-clock time.
   scan:
@@ -142,7 +153,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slot: [1, 2, 3, 4]
+        slot: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout zemer-cipher
         uses: actions/checkout@v4
@@ -166,9 +177,16 @@ jobs:
 
       # Residential-grade egress for the drains (see EGRESS above). WARP is connected only around
       # the drain steps and disconnected before the artifact upload.
+      # npm cache keyed on the harness lockfile: ~15 s per slot saved on a warm cache.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('harness/tests/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
       - name: Install harness dependencies
         run: |
-          npm ci --prefix harness/tests
+          npm ci --prefix harness/tests --prefer-offline --no-audit --no-fund
           # The harness is written for the zemer-app layout, where the cipher submodule sits at
           # ../cipher relative to tests/ (player_configs.json for the cipher, stream_clients.json for
           # the loader). This checkout IS that repo, so point the expected path at the workspace
@@ -255,6 +273,9 @@ jobs:
           YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
           SCAN_PROXY: ${{ (vars.SCAN_EGRESS || 'warp') == 'proxy' && secrets.SCAN_PROXY || '' }}
           VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
+          # The retired clients feed only the "works again" alert: slot 1 covers them, the other
+          # slots drain the table alone (the two transports already run concurrently inside).
+          SKIP_RETIRED: ${{ matrix.slot == 1 && '0' || '1' }}
         run: |
           STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
             node harness/tests/scan-stream-clients.mjs > /tmp/scan.json 2> /tmp/scan.log \
@@ -390,33 +411,33 @@ jobs:
         with:
           pattern: client-scan-slot-*
           path: /tmp/slots
-      # Among the slots whose egress verified before AND after, prefer the one with the most whole
-      # songs and the fewest transport errors: every verified slot is legitimate evidence, and a
-      # tunnel hiccup in one must not outrank a clean drain in another.
-      - name: Pick the best verified slot
+      # Every slot whose egress verified before AND after is legitimate evidence: MERGE them
+      # (tools/clients/merge-slots.mjs) - a whole song from any clean egress proves a client works,
+      # a failure counts only when every clean egress agrees, so a false death needs every
+      # independent egress to be wrong at once. drift/bumps come from the first verified slot.
+      - name: Merge the verified slots
         id: pick
         run: |
           ls -d /tmp/slots/client-scan-slot-* 2>/dev/null || true
-          BEST=$(node -e '
-            const fs = require("fs");
-            let best = null;
-            for (const d of fs.readdirSync("/tmp/slots").map((n) => "/tmp/slots/" + n).sort()) {
-              let s; try { s = JSON.parse(fs.readFileSync(d + "/scan.json", "utf8")); } catch { continue; }
-              const all = s.clients.flatMap((c) => [...(c.results || []), ...(c.sabrResults || [])]);
-              const score = all.filter((r) => r.kind === "whole").length * 10 - all.filter((r) => r.kind === "error").length;
-              console.error(`${d}: score ${score}`);
-              if (!best || score > best.score) best = { d, score };
-            }
-            process.stdout.write(best ? best.d : "");
-          ')
-          if [ -z "$BEST" ]; then
+          FILES=""; FIRST=""
+          for d in $(ls -d /tmp/slots/client-scan-slot-* 2>/dev/null | sort); do
+            [ -s "$d/scan.json" ] || continue
+            FILES="$FILES $d/scan.json"; [ -n "$FIRST" ] || FIRST="$d"
+          done
+          if [ -z "$FIRST" ]; then
             echo "::error::no slot verified its egress - nothing scanned this run"
             echo "verified=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          cp "$BEST"/scan.json "$BEST"/drift.json "$BEST"/bumps.json "$BEST"/scan.log "$BEST"/egress.txt /tmp/ 2>/dev/null || true
-          echo "using $(cat "$BEST/egress.txt")"
-          echo "verified=true" >> "$GITHUB_OUTPUT"; echo "slot=$(basename "$BEST")" >> "$GITHUB_OUTPUT"
+          node tools/clients/merge-slots.mjs $FILES > /tmp/scan.json
+          cp "$FIRST"/drift.json "$FIRST"/bumps.json /tmp/ 2>/dev/null || true
+          : > /tmp/scan.log; : > /tmp/egress.txt
+          for d in $(ls -d /tmp/slots/client-scan-slot-* 2>/dev/null | sort); do
+            [ -s "$d/scan.json" ] || continue
+            cat "$d/egress.txt" >> /tmp/egress.txt; echo "=== $(cat "$d/egress.txt")" >> /tmp/scan.log; cat "$d/scan.log" >> /tmp/scan.log
+          done
+          echo "merged $(echo $FILES | wc -w) verified slot(s):"; cat /tmp/egress.txt
+          echo "verified=true" >> "$GITHUB_OUTPUT"; echo "slot=$(tr '\n' ';' < /tmp/egress.txt)" >> "$GITHUB_OUTPUT"
 
       # A first pass with no issue history: decides whether ANYTHING needs the alert job at all
       # (dead / revived / resurrected / drift / bumps / inconclusive). The bench quorum needs the
@@ -966,6 +987,7 @@ jobs:
           SHA: ${{ needs.deploy.outputs.sha }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EGRESS: ${{ needs.collect.outputs.slot }}
         run: |
           if [ -z "$BOT_TOKEN" ]; then echo "No TELEGRAM_BOT_TOKEN — skipping Telegram."; exit 0; fi
           if [ "$DEPLOY_RESULT" = "success" ] && [ -n "$APPLIED" ]; then
@@ -984,7 +1006,7 @@ jobs:
             HEAD_LINE="Stream-client monitor: attention"
             ACTION="Nothing benched this run (first sighting, refused, drift, or an inconclusive scan — see the issues)."
           fi
-          MESSAGE=$(printf "%s\n\n%s\n\nRefused: %s\n\n%s\n\nRun: %s" "$HEAD_LINE" "$SUMMARY" "${REFUSED:-none}" "$ACTION" "$RUN_URL")
+          MESSAGE=$(printf "%s\n\n%s\n\nRefused: %s\n\nEgress: %s\n\n%s\n\nRun: %s" "$HEAD_LINE" "$SUMMARY" "${REFUSED:-none}" "${EGRESS:-?}" "$ACTION" "$RUN_URL")
           RECIPIENTS=$(printf '%s %s' "$PRIMARY_CHAT_ID" "$EXTRA_CHAT_IDS" | tr ',\n' '  ' | tr -s ' ' '\n' | awk 'NF && !seen[$0]++')
           for CID in $RECIPIENTS; do
             THREAD_ARG=()
