@@ -622,7 +622,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ needs.deploy.outputs.sha }}
-          TARGET: ${{ needs.deploy.outputs.target || 'master' }}
+          # Where the table devices/this pipeline read lives: the deploy target when deploy ran,
+          # else the branch in branch mode (pre-merge, master has no table), else master.
+          TARGET: ${{ needs.deploy.outputs.target || (vars.AUTO_DEPLOY_CLIENTS == 'branch' && github.ref_name) || 'master' }}
           HEALTHY: ${{ needs.alert.outputs.healthy }}
           APPLIED: ${{ needs.deploy.outputs.applied }}
           # Keys STILL drifting after this run (empty when nothing drifts): a drift issue whose key
