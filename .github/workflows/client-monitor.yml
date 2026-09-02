@@ -867,24 +867,9 @@ jobs:
             echo "verified=unknown" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          WRONG=$(node -e '
-            const fs = require("fs");
-            const d = JSON.parse(fs.readFileSync("/tmp/deployed.json", "utf8"));
-            const bumps = JSON.parse(fs.readFileSync("/tmp/bumps.json", "utf8"));
-            const bad = [];
-            for (const a of process.argv[1].split(/\s+/).filter(Boolean)) {
-              const [op, key] = a.split(":");
-              const e = (d.clients || []).find((c) => c && c.key === key);
-              if (!e) { bad.push(a); continue; }
-              if (op === "bump") {
-                const fields = (bumps.find((b) => b.key === key) || {}).fields || {};
-                if (!Object.entries(fields).every(([f, v]) => e[f] === v)) bad.push(a);
-              } else if (op === "sabr-bench" || op === "sabr-unbench") {
-                if (!e.sabr || (op === "sabr-bench") !== (e.sabr.enabled === false)) bad.push(a);
-              } else if ((op === "bench") !== (e.enabled === false)) bad.push(a);
-            }
-            process.stdout.write(bad.join(","));
-          ' "$APPLIED")
+          # tools/clients/verify-deploy.mjs (tested): every applied action must be visible in the
+          # read-back table - bench/un-bench flags, SABR flags, bumped identity fields.
+          WRONG=$(node tools/clients/verify-deploy.mjs /tmp/deployed.json /tmp/bumps.json "$APPLIED")
           if [ -n "$WRONG" ]; then
             echo "::error::deployed file does not carry: $WRONG — rolling back"
             echo "verified=false" >> "$GITHUB_OUTPUT"

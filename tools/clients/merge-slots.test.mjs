@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mergeScans } from "./merge-slots.mjs";
+import { missingActions } from "./verify-deploy.mjs";
 
 const r = (video, kind, reason = "") => ({ video, kind, reason });
 const scan = (clients, videos = ["a", "b"]) => ({ videos, clients });
@@ -41,4 +42,16 @@ test("a single slot merges to itself; clients missing from a slot keep the other
   assert.deepEqual(m.clients.map((c) => c.key), ["A", "C"]);
   assert.equal(m.clients[0].results[0].kind, "whole"); assert.equal(m.clients[1].results[0].kind, "partial");
   assert.throws(() => mergeScans([]), /no scans/);
+});
+
+test("verify-deploy: every action kind is checked against the read-back table", () => {
+  const deployed = { clients: [
+    { key: "A" }, { key: "B", enabled: false }, { key: "C", clientVersion: "2.0", userAgent: "ua" },
+    { key: "D", sabr: { enabled: false } }, { key: "E", sabr: { osName: "x" } }, { key: "F" },
+  ] };
+  const bumps = [{ key: "C", fields: { clientVersion: "2.0" } }, { key: "F", fields: { clientVersion: "9" } }];
+  assert.deepEqual(missingActions(deployed, bumps, "bench:B unbench:A bump:C sabr-bench:D sabr-unbench:E"), []);
+  assert.deepEqual(missingActions(deployed, bumps, "bench:A unbench:B bump:F sabr-bench:E sabr-unbench:D bench:ZZ bump:A weird:A"),
+    ["bench:A", "unbench:B", "bump:F", "sabr-bench:E", "sabr-unbench:D", "bench:ZZ", "bump:A", "weird:A"]);
+  assert.deepEqual(missingActions({}, [], ""), []);
 });

@@ -153,7 +153,11 @@ slots (six runners, six regions, six colos): only a slot whose egress verified -
 after its drains, with a `/player` plus a CDN range - drains, and `collect` MERGES every verified
 slot (`tools/clients/merge-slots.mjs`): a whole song from any clean egress proves a client works, a
 failure counts only when every clean egress agrees, so a false death needs every independent egress
-to be wrong at once. One gated colo no longer costs a run. If no slot
+to be wrong at once. A slot whose post-drain check fails is only partially trusted: its whole songs
+still count (they happened), its failures do not. Slots 5-6 run on ARM-hosted runners (a second
+Azure pool, other colos); identity-bump candidates are drained in slots 1-2 only. One gated colo no
+longer costs a run. `node tools/clients/report-runs.mjs [N]` prints the last N runs' verified slots,
+colos, merged verdicts and wall-clock - the reliability record. If no slot
 verifies, the workflow re-dispatches itself on fresh runners, up to `MAX_RUNNER_ATTEMPTS`
 (default 4) sets. A bot-gated verdict is
 never accepted: either the egress is proven clean before a single drain, or the cycle ends with an
