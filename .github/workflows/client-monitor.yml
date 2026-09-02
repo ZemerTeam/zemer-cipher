@@ -245,6 +245,10 @@ jobs:
       - name: Connect WARP egress (verified, re-rolled until the bot gate lifts)
         id: egress
         if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        # A slot must never hold the run: one slot sat 20 minutes in apt (the runner's background
+        # apt held the lock, 2026-09-02) while the other seven had long finished. Past this, the
+        # slot fails like a refused egress and the verified slots carry the run.
+        timeout-minutes: 8
         env:
           YT_COOKIE: ${{ secrets.YT_COOKIE }}
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
@@ -256,7 +260,12 @@ jobs:
         run: |
           curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
-          sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp >/dev/null
+          # Bounded apt: wait at most 60 s for the dpkg lock per try, three tries.
+          for try in 1 2 3; do
+            sudo apt-get -o DPkg::Lock::Timeout=60 update -qq && sudo apt-get -o DPkg::Lock::Timeout=60 install -y -qq cloudflare-warp >/dev/null && break
+            echo "::warning::apt try $try failed (lock held or repo slow) - retrying"; sleep 15
+          done
+          command -v warp-cli >/dev/null || { echo "::warning::cloudflare-warp did not install - slot refused"; echo "verified=false" >> "$GITHUB_OUTPUT"; exit 0; }
           # IPv6 ONLY on WARP, for the probes and the drains alike: WARP's v6 pool passes the gate and
           # the CDN, its shared v4 pool does not (probe: UNPLAYABLE; a slot that verified over v4
           # then went partial/bot-gated mid-run). FORCE_IPV6 reaches every later harness step.
