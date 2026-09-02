@@ -105,7 +105,7 @@ pinned across the two readers by `src/test/resources/stream-clients-parity/`.
 
 There is no upstream artifact to "scan" for clients the way `player_ias` hashes are scanned, so the
 monitor measures the thing that matters directly: after every completed run of the player monitor
-(`workflow_run`, rate-limited to one scan per `MIN_SCAN_INTERVAL_MINUTES`, default 60) and at
+(`workflow_run`, rate-limited to one scan per `MIN_SCAN_INTERVAL_MINUTES`, default 30) and at
 least every 3 h, it drains a whole song through EVERY known client on the validation videos, using the zemer-app harness (`tests/scan-stream-clients.mjs`
 = the same `client-fulldownload.mjs` drain a human runs). The roster is dynamic — the table's live
 entries, its benched entries, and every client the app retired (`tests/clients-retired.mjs`) — and
@@ -126,7 +126,7 @@ each outcome has one response:
 
 An identity bump of a `sabr`-capable entry must drain whole songs over BOTH transports before it
 deploys. The open detection issues are the pipeline's memory: a client is benched only when its *failing*
-issue was already open (at least `MIN_FLAG_AGE_MINUTES`, default 60) before the run — one bad
+issue was already open (at least `MIN_FLAG_AGE_MINUTES`, default 30) before the run - a kill is benched within about an hour — one bad
 scan can never write. `tools/clients/decide.mjs` holds the rules (`clients.test.mjs`): the main is
 never benched, at least `MIN_LIVE_FALLBACKS` (default 2) live fallbacks must remain, and
 `tools/clients/apply-bench.mjs` (bench / un-bench: exactly ONE line) and `apply-bump.mjs`

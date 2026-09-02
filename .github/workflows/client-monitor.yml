@@ -41,7 +41,7 @@ name: Stream Client Monitor
 "on":
   # Chained to the player monitor: every completed run of it (every ~20 min from master) triggers
   # a client scan, rate-limited by the `gate` job to one drain per MIN_SCAN_INTERVAL_MINUTES
-  # (default 60) — 17 whole-song drains per scan add up. workflow_run only fires for workflows on
+  # (default 30). workflow_run only fires for workflows on
   # the DEFAULT branch, so the chain (like the schedule) activates on merge.
   workflow_run:
     workflows: ["YouTube Player Monitor"]
@@ -105,7 +105,9 @@ jobs:
           if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "push" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"; echo "manual/push: scanning"; exit 0
           fi
-          MIN="${MIN_MINUTES:-60}"
+          # Default cadence 30 min (chained to the player monitor): with the two-sighting quorum at
+          # MIN_FLAG_AGE_MINUTES (default 30) a kill is benched within about an hour.
+          MIN="${MIN_MINUTES:-30}"
           LAST=$(gh api "repos/$REPO/actions/workflows/client-monitor.yml/runs?status=success&per_page=10"             --jq "[.workflow_runs[] | select(.id != ($THIS_RUN|tonumber)) | .updated_at] | first // empty" 2>/dev/null || true)
           if [ -z "$LAST" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; echo "no previous successful scan: scanning"; exit 0; fi
           AGE=$(( ( $(date -u +%s) - $(date -u -d "$LAST" +%s) ) / 60 ))
@@ -575,7 +577,7 @@ jobs:
           private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
 
       # Which clients were ALREADY flagged by an older run: an open "failing"/"revived" issue at
-      # least MIN_FLAG_AGE_MINUTES old (default 60 — a manual re-run minutes after the first must not
+      # least MIN_FLAG_AGE_MINUTES old (default 30 — a manual re-run minutes after the first must not
       # count as the second consecutive sighting). Dedup is by exact title across ALL open issues.
       - name: Read the open detection issues
         id: flagged
@@ -587,7 +589,7 @@ jobs:
           script: |
             const { pathToFileURL } = require('url');
             const { ISSUE_TITLE_RE, REVIVED_TITLE_RE, SABR_ISSUE_TITLE_RE, SABR_REVIVED_TITLE_RE } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/tools/clients/decide.mjs`).href);
-            const minAgeMs = Number(process.env.MIN_FLAG_AGE_MINUTES || 60) * 60 * 1000;
+            const minAgeMs = Number(process.env.MIN_FLAG_AGE_MINUTES || 30) * 60 * 1000;
             const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
             });
