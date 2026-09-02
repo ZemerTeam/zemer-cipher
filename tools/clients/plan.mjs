@@ -46,6 +46,7 @@ for (const d of sabr.sabrDead) lines.push(`- ${d.key}: SABR DEAD — ${d.reasons
 for (const r of sabr.sabrRevived) lines.push(`- ${r.key}: SABR works again on a benched capability — ${sabrUnplan.unbench.includes(r.key) ? "UN-BENCHING" : "un-bench on the next run if still whole"}`);
 if (sabr.sabrDead.length === 0 && sabr.sabrRevived.length === 0 && !sabr.conclusive && (scan.clients || []).some((c) => c.sabr === "live" && (c.role || "live") === "live")) lines.push("- SABR pass INCONCLUSIVE (no entry drained a whole song over SABR — runner/cookie/cipher suspect)");
 if (!verdict.conclusive) lines.push("- scan INCONCLUSIVE (no client drained a whole song — runner/cookie/cipher suspect)");
+if (scan.mergedSlots === 1) lines.push("- EGRESS THIN: a single verified slot — its failures are inconclusive (a kill needs two independent egresses), whole songs still count");
 // A validation VIDEO that every live client rejects the same way (removed, region-blocked,
 // age-gated) is the video's problem: say so, so nobody reads the row as client trouble.
 const liveClients = (scan.clients || []).filter((c) => (c.role || "live") === "live");

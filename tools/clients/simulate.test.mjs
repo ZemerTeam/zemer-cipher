@@ -301,3 +301,14 @@ test("MULTI-SLOT: a lone failing slot against silence (others errored) stays inc
   run(w, mergeScans(slots())); const r = run(w, mergeScans(slots()));
   assert.deepEqual(r.dead, []); assert.deepEqual(r.applied, []); assert.deepEqual(r.inconclusive, ["WEB_CREATOR"]);
 });
+
+test("MULTI-SLOT: a run with a SINGLE verified slot never kills - even a real death waits for a run with two clean egresses", () => {
+  const w = world(TABLE_TODAY);
+  const kill = { ...healthyAll, TVHTML5_SIMPLY: ["partial", "partial"] };
+  // Three thin runs in a row: the death is real, but one address is not evidence.
+  for (let i = 0; i < 3; i++) { const r = run(w, mergeScans([slotScan(kill)])); assert.deepEqual(r.dead, []); assert.deepEqual(r.applied, []); assert.deepEqual(r.inconclusive, ["TVHTML5_SIMPLY"]); }
+  assert.equal(w.table, TABLE_TODAY);
+  // Two verified slots agree twice: benched on the second of those runs.
+  const r1 = run(w, mergeScans([slotScan(kill), slotScan(kill)])); assert.deepEqual(r1.dead, ["TVHTML5_SIMPLY"]); assert.deepEqual(r1.applied, []);
+  const r2 = run(w, mergeScans([slotScan(kill), slotScan(kill)])); assert.deepEqual(r2.applied, ["bench:TVHTML5_SIMPLY"]);
+});

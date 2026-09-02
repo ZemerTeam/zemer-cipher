@@ -414,7 +414,7 @@ jobs:
           # flag rides in scan.json; merge-slots keeps only the whole verdicts of such a slot.
           # One retry after a pause: a CDN range right after a drain burst can be throttled for a
           # moment without the egress having flipped - demoting a slot on that alone would starve a
-          # real kill of the unanimous failures it needs.
+          # real kill of the two agreeing clean egresses it needs.
           if QUICK=1 node harness/tests/probe-bot-gate.mjs || { sleep 15; QUICK=1 node harness/tests/probe-bot-gate.mjs; }; then
             node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/scan.json","utf8"));s.postcheckClean=true;fs.writeFileSync("/tmp/scan.json",JSON.stringify(s,null,2))'
             echo "clean=true" >> "$GITHUB_OUTPUT"
@@ -476,8 +476,9 @@ jobs:
           path: /tmp/slots
       # Every slot whose egress verified before AND after is legitimate evidence: MERGE them
       # (tools/clients/merge-slots.mjs) - a whole song from any clean egress proves a client works,
-      # a failure counts only when every clean egress agrees, so a false death needs every
-      # independent egress to be wrong at once. drift/bumps come from the first verified slot.
+      # a failure counts only when at least two clean egresses agree and none drained it whole, so
+      # a false death needs two independent egresses to be wrong at once and a run with a single
+      # verified slot can never kill. drift/bumps come from the first verified slot.
       - name: Merge the verified slots
         id: pick
         run: |

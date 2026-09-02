@@ -7,7 +7,7 @@ import { missingActions } from "./verify-deploy.mjs";
 const r = (video, kind, reason = "") => ({ video, kind, reason });
 const scan = (clients, videos = ["a", "b"]) => ({ videos, clients });
 
-test("a whole song from any slot wins; a failure needs every slot to fail; mixed is inconclusive", () => {
+test("a whole song from any slot wins; a failure needs two agreeing slots; mixed is inconclusive", () => {
   const m = mergeScans([
     scan([{ key: "A", main: true, results: [r("a", "whole"), r("b", "error", "reset")], sabrResults: [r("a", "partial")] },
           { key: "B", results: [r("a", "partial", "403"), r("b", "partial", "403")], sabrResults: [] }]),
@@ -50,12 +50,20 @@ test("a slot whose post-check failed contributes only its whole songs, never its
   assert.deepEqual(only.clients[0].results, []);
 });
 
-test("a single slot merges to itself; clients missing from a slot keep the others' evidence", () => {
+test("a single slot keeps its whole songs but can never kill; clients missing from a slot keep the others' evidence", () => {
   const one = scan([{ key: "A", main: true, results: [r("a", "whole")], sabrResults: [] }]);
   assert.deepEqual(mergeScans([one]).clients[0].results.map((x) => x.kind), ["whole"]);
+  // One verified egress is one address: its definitive failure is reported as inconclusive.
+  const solo = mergeScans([scan([{ key: "K", results: [r("a", "partial", "403 at 1MiB")], sabrResults: [r("a", "no-sabr")] }])]).clients[0];
+  assert.equal(solo.results[0].kind, "error"); assert.match(solo.results[0].reason, /single egress: partial, a failure needs two/);
+  assert.equal(solo.sabrResults[0].kind, "error"); assert.match(solo.sabrResults[0].reason, /single egress: no-sabr/);
   const m = mergeScans([one, scan([{ key: "A", main: true, results: [r("a", "partial")], sabrResults: [] }, { key: "C", results: [r("a", "partial")], sabrResults: [] }])]);
   assert.deepEqual(m.clients.map((c) => c.key), ["A", "C"]);
-  assert.equal(m.clients[0].results[0].kind, "whole"); assert.equal(m.clients[1].results[0].kind, "partial");
+  assert.equal(m.clients[0].results[0].kind, "whole");
+  assert.equal(m.clients[1].results[0].kind, "error", "C drained on one slot only - inconclusive, never a kill");
+  // Two clean slots agreeing on the failure is the smallest kill.
+  const two = mergeScans([scan([{ key: "C", results: [r("a", "partial")], sabrResults: [] }]), scan([{ key: "C", results: [r("a", "partial")], sabrResults: [] }])]);
+  assert.equal(two.clients[0].results[0].kind, "partial"); assert.equal(two.clients[0].results[0].agree, 2);
   assert.throws(() => mergeScans([]), /no scans/);
 });
 
