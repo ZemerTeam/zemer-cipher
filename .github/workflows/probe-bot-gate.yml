@@ -70,9 +70,14 @@ jobs:
       - run: |
           npm ci --prefix harness/tests
           rm -rf harness/cipher && ln -s "$GITHUB_WORKSPACE" harness/cipher
-      - name: Probe via WARP
+      - name: Probe via WARP (IPv6 default, then IPv4-only)
         env:
           YT_COOKIE: ${{ secrets.YT_COOKIE }}
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
-        run: node harness/tests/probe-bot-gate.mjs
+        run: |
+          echo "--- v6 (default) ---"; curl -6 -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(ip|colo)=' || true
+          QUICK=1 node harness/tests/probe-bot-gate.mjs || true
+          echo "--- v4 only ---"; curl -4 -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(ip|colo)=' || true
+          FORCE_IPV4=1 QUICK=1 node harness/tests/probe-bot-gate.mjs || true
+          FORCE_IPV4=1 node harness/tests/probe-bot-gate.mjs
 
