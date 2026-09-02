@@ -115,12 +115,15 @@ each outcome has one response:
 |---|---|
 | a live entry fails, two consecutive runs | **bench** it (`enabled: false`) and deploy |
 | a benched entry drains whole songs, two consecutive runs | **un-bench** it and deploy |
+| a `sabr`-capable entry fails over SABR on every video, two consecutive runs (`tests/sabr-clients.mjs` drain, the same scan) | **bench its SABR capability** (`sabr.enabled: false`) and deploy — the entry keeps streaming progressively and keeps its SABR identity overrides |
+| a SABR-benched entry drains whole songs over SABR, two consecutive runs | **un-bench the SABR capability** and deploy |
 | a retired client drains a whole song | issue *Retired client works again* (re-adding is a human, validated table change) |
 | an entry's identity (clientVersion, userAgent, os/device) is behind yt-dlp master (`tests/scan-client-versions.mjs`, per the entry's `mirrors` key) | **bump** it: the entry is copied into a candidate table with yt-dlp's values (`tools/clients/apply-bump.mjs --out`), the candidate must drain a whole song on EVERY validation video, then it deploys; an unverified candidate only opens an *identity drift* issue with the reason |
 | no client at all drained a whole song | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table (a dead MAIN with healthy fallbacks is reported as dead — a human decision — and its yt-dlp bump can revive it) |
 | "Sign in to confirm you're not a bot" on an anonymous request | `bot-gated` = INCONCLUSIVE (the runner's IP, not the client): never a kill, never a bench, never a verified bump |
 
-The open detection issues are the pipeline's memory: a client is benched only when its *failing*
+An identity bump of a `sabr`-capable entry must drain whole songs over BOTH transports before it
+deploys. The open detection issues are the pipeline's memory: a client is benched only when its *failing*
 issue was already open (at least `MIN_FLAG_AGE_MINUTES`, default 60) before the run — one bad
 scan can never write. `tools/clients/decide.mjs` holds the rules (`clients.test.mjs`): the main is
 never benched, at least `MIN_LIVE_FALLBACKS` (default 2) live fallbacks must remain, and

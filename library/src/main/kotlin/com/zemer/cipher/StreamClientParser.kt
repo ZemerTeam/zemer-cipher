@@ -74,13 +74,19 @@ object StreamClientParser {
          */
         val sabr: SabrInfo? = null,
     ) {
-        /** SABR clientInfo overrides; every field optional (null = inherit the entry's own). */
+        /**
+         * SABR clientInfo overrides; every field optional (null = inherit the entry's own).
+         * [enabled] false = the SABR capability is BENCHED (the client-monitor's kill switch for the
+         * SABR transport alone: the entry keeps streaming progressively and keeps its identity
+         * overrides for the day SABR works again). Absent = enabled.
+         */
         data class SabrInfo(
             val osName: String? = null,
             val osVersion: String? = null,
             val deviceMake: String? = null,
             val deviceModel: String? = null,
             val androidSdkVersion: String? = null,
+            val enabled: Boolean = true,
         )
 
         /**
@@ -277,6 +283,16 @@ object StreamClientParser {
         val deviceMake = optionalString(sabrObj, "deviceMake") { headerSafe(it, 64) } ?: return null
         val deviceModel = optionalString(sabrObj, "deviceModel") { headerSafe(it, 64) } ?: return null
         val androidSdkVersion = optionalString(sabrObj, "androidSdkVersion") { VERSIONISH_RE.matches(it) } ?: return null
+        // `enabled`: absent/null/true = enabled; a strict false benches the SABR capability; any
+        // other shape is a malformed entry (same rule as the entry-level kill switch).
+        val enabled = when (val e = sabrObj["enabled"]) {
+            null, JsonNull -> true
+            else -> when ((e as? JsonPrimitive)?.takeIf { !it.isString }?.content) {
+                "true" -> true
+                "false" -> false
+                else -> return null
+            }
+        }
         return OptionalSabr(
             StreamClientDef.SabrInfo(
                 osName = osName.value,
@@ -284,6 +300,7 @@ object StreamClientParser {
                 deviceMake = deviceMake.value,
                 deviceModel = deviceModel.value,
                 androidSdkVersion = androidSdkVersion.value,
+                enabled = enabled,
             ),
         )
     }

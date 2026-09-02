@@ -249,6 +249,19 @@ class StreamClientParserTest {
     }
 
     @Test
+    fun `sabr enabled - absent or true is enabled, strict false benches SABR only, other shapes skip`() {
+        assertTrue(success(file(entry(extra = """, "sabr": {}"""))).clients[0].sabr!!.enabled)
+        assertTrue(success(file(entry(extra = """, "sabr": {"enabled": true}"""))).clients[0].sabr!!.enabled)
+        assertTrue(success(file(entry(extra = """, "sabr": {"enabled": null}"""))).clients[0].sabr!!.enabled)
+        val benched = success(file(entry(extra = """, "sabr": {"osName": "Windows", "enabled": false}"""))).clients[0]
+        assertEquals(false, benched.sabr!!.enabled)
+        assertEquals("Windows", benched.sabr!!.osName)   // identity kept for the un-bench
+        for (bad in listOf("\"false\"", "0", "[]")) {
+            failure(file(entry(extra = """, "sabr": {"enabled": $bad}""")))
+        }
+    }
+
+    @Test
     fun `a malformed sabr field skips the entry - or rejects the file when it is the main row`() {
         for (bad in listOf("true", "\"yes\"", "[]", """{"osName": 1}""", """{"osVersion": "bad version!"}""")) {
             val result = StreamClientParser.parse(file(entry(), entry(key = "B", extra = """, "sabr": $bad""")))

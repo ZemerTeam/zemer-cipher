@@ -12,7 +12,9 @@
 //     it must parse, the benched key must be the ONLY new skip, and the live chain must still be
 //     the old chain minus that key with at least `minLiveFallbacks` live fallbacks.
 //
-//   node tools/clients/apply-bench.mjs --config <path> --key <KEY> --harness <dir> [--unbench] [--dry-run]
+//   node tools/clients/apply-bench.mjs --config <path> --key <KEY> --harness <dir> [--unbench] [--sabr] [--dry-run]
+//   --sabr: bench/un-bench the entry's SABR CAPABILITY only (`sabr.enabled: false` inside its
+//           sabr object) — the entry stays in the progressive chain.
 //   stdout: JSON { ok, key, noop, reason }
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -57,6 +59,92 @@ function entryBounds(lines, key) {
   for (let i = open; i < lines.length; i++) { depth += braces(lines[i]); if (i > open && depth <= 0) { close = i; break; } }
   if (close <= at) throw new Error(`no closing brace below the ${key} key line`);
   return { at, open, close, indent };
+}
+
+/**
+ * SABR-capability bench: set `"enabled": false` INSIDE the entry's `sabr` object (one-line
+ * `{ ... }` / `{}` or a multi-line block). Pure text edit; no-op when already benched; throws when
+ * the entry has no sabr object (nothing to bench) or the key is not unique.
+ */
+export function benchSabrText(text, key) {
+  const lines = text.split("\n");
+  const { open, close } = entryBounds(lines, key);
+  const at = lines.slice(open, close + 1).findIndex((l) => /^\s*"sabr"\s*:\s*\{/.test(l));
+  if (at < 0) throw new Error(`${key} carries no sabr object`);
+  const i = open + at, line = lines[i];
+  const { end } = sabrObjectEnd(lines, i, close);
+  if (/"enabled"\s*:\s*false/.test(lines.slice(i, end + 1).join("\n"))) return { text, changed: false, reason: "SABR capability already benched" };
+  if (end === i) {
+    // One-line object: `{}` or `{ "osName": ... }`.
+    lines[i] = /\{\s*\}/.test(line) ? line.replace(/\{\s*\}/, '{ "enabled": false }') : line.replace(/\{\s*/, '{ "enabled": false, ');
+  } else {
+    // Multi-line block: a new member line right after the opening brace, indented like its members.
+    const memberIndent = (lines[i + 1].match(/^(\s*)/) || ["", ""])[1] || ((line.match(/^(\s*)/) || ["", ""])[1] + "  ");
+    lines.splice(i + 1, 0, `${memberIndent}"enabled": false,`);
+  }
+  return { text: lines.join("\n"), changed: true };
+}
+
+/** The line index where the sabr object opened at [i] closes (same line for one-liners). */
+function sabrObjectEnd(lines, i, close) {
+  let depth = 0;
+  for (let j = i; j <= close; j++) {
+    for (const ch of lines[j].replace(/"(?:[^"\\]|\\.)*"/g, "")) { if (ch === "{") depth++; else if (ch === "}") depth--; }
+    if (depth <= 0) return { end: j };
+  }
+  throw new Error("unterminated sabr object");
+}
+
+/** SABR-capability un-bench: remove the `"enabled": false` member from the entry's sabr object. */
+export function unbenchSabrText(text, key) {
+  const lines = text.split("\n");
+  const { open, close } = entryBounds(lines, key);
+  const at = lines.slice(open, close + 1).findIndex((l) => /^\s*"sabr"\s*:\s*\{/.test(l));
+  if (at < 0) throw new Error(`${key} carries no sabr object`);
+  const i = open + at;
+  const { end } = sabrObjectEnd(lines, i, close);
+  const block = lines.slice(i, end + 1);
+  const idx = block.findIndex((l) => /"enabled"\s*:\s*false/.test(l));
+  if (idx < 0) return { text, changed: false, reason: "SABR capability is not benched" };
+  if (end === i) {
+    // One-liner: drop the member and tidy the commas / empty object.
+    let l = block[0].replace(/"enabled"\s*:\s*false\s*,?\s*/, "").replace(/,\s*\}/, " }").replace(/\{\s+\}/, "{}").replace(/\{\s*"/, '{ "');
+    lines[i] = l;
+  } else if (/^\s*"enabled"\s*:\s*false\s*,?\s*$/.test(block[idx])) {
+    // Multi-line: remove the member line; if it was the LAST member, the previous member loses its comma;
+    // if it was the ONLY member, the block collapses to `{}`.
+    const wasLast = !/,\s*$/.test(block[idx]);
+    const members = block.length - 2;
+    if (members === 1) { lines.splice(i, end - i + 1, block[0].replace(/\{.*$/, "{}") + (/,\s*$/.test(block[end - i]) ? "," : "")); }
+    else { lines.splice(i + idx, 1); if (wasLast) lines[i + idx - 1] = lines[i + idx - 1].replace(/,\s*$/, ""); }
+  } else {
+    throw new Error(`${key}: the enabled member shares a line with other members — un-bench by hand`);
+  }
+  return { text: lines.join("\n"), changed: true };
+}
+
+/**
+ * SABR bench/un-bench invariants: chain and skips identical, every entry identical except the
+ * target, whose parsed `sabr` differs from before ONLY by `enabled` (identity overrides kept).
+ */
+export function verifySabrToggle(before, after, key, parse, expectBenched) {
+  const was = parse(before), now = parse(after);
+  if (was.skipped.join(",") !== now.skipped.join(",")) throw new Error("the set of skipped entries changed");
+  const wasKeys = was.clients.map((c) => c.key), nowKeys = now.clients.map((c) => c.key);
+  if (wasKeys.join(",") !== nowKeys.join(",")) throw new Error(`live chain changed: ${wasKeys.join(",")} -> ${nowKeys.join(",")}`);
+  if (!wasKeys.includes(key)) throw new Error(`${key} is not a live entry`);
+  const same = (a, b) => JSON.stringify(a, Object.keys(a).sort()) === JSON.stringify(b, Object.keys(b).sort());
+  for (let i = 0; i < wasKeys.length; i++) {
+    const a = was.clients[i], b = now.clients[i];
+    if (a.key !== key) { if (!same(a, b)) throw new Error(`entry ${a.key} changed but was not the target`); continue; }
+    if (!a.sabr || !b.sabr) throw new Error(`${key} must carry a sabr object before and after`);
+    const strip = (o) => { const c = { ...o }; delete c.sabr; return c; };
+    if (!same(strip(a), strip(b))) throw new Error(`${key}: a non-sabr field changed`);
+    const ident = (o) => { const c = { ...o }; delete c.enabled; return c; };
+    if (!same(ident(a.sabr), ident(b.sabr))) throw new Error(`${key}: the sabr identity overrides changed`);
+    if ((b.sabr.enabled === false) !== expectBenched) throw new Error(`${key}: sabr.enabled is ${b.sabr.enabled}, expected ${expectBenched ? "false" : "absent/true"}`);
+  }
+  return { liveBefore: wasKeys, liveAfter: nowKeys, sabrBenched: expectBenched };
 }
 
 /**
@@ -157,6 +245,7 @@ if (isMain) {
   const config = arg("--config"), key = arg("--key"), harness = arg("--harness");
   const dryRun = process.argv.includes("--dry-run");
   const unbench = process.argv.includes("--unbench");
+  const sabrMode = process.argv.includes("--sabr");
   // The same floor the plan used (MIN_LIVE_FALLBACKS), so plan and writer can never disagree.
   const minLiveFallbacks = Number(arg("--min-live-fallbacks") || process.env.MIN_LIVE_FALLBACKS || 2);
   const out = (o) => { process.stdout.write(JSON.stringify(o) + "\n"); process.exit(o.ok ? 0 : 1); };
@@ -164,6 +253,13 @@ if (isMain) {
   const { parseStreamClients } = await import(pathToFileURL(path.resolve(harness, "tests/stream-clients.mjs")).href);
   const before = readFileSync(config, "utf8");
   try {
+    if (sabrMode) {
+      const edit = unbench ? unbenchSabrText(before, key) : benchSabrText(before, key);
+      if (!edit.changed) out({ ok: true, key, noop: true, sabr: true, reason: edit.reason });
+      const check = verifySabrToggle(before, edit.text, key, parseStreamClients, !unbench);
+      if (!dryRun) writeFileSync(config, edit.text);
+      out({ ok: true, key, noop: false, dryRun, unbench, sabr: true, ...check });
+    }
     const edit = unbench ? unbenchEntryText(before, key) : benchEntryText(before, key);
     if (!edit.changed) out({ ok: true, key, noop: true, reason: edit.reason });
     const check = unbench

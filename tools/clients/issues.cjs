@@ -21,6 +21,8 @@ module.exports = async function syncIssues({ github, context, core, mode }) {
 
   const reasons = (key) => (scan.clients.find((c) => c.key === key)?.results || [])
     .map((r) => `- \`${r.video}\`: ${r.kind}${r.reason ? " — " + r.reason : ""}`).join("\n");
+  const sabrReasons = (key) => (scan.clients.find((c) => c.key === key)?.sabrResults || [])
+    .map((r) => `- \`${r.video}\` (SABR): ${r.kind}${r.reason ? " — " + r.reason : ""}`).join("\n");
 
   const upsert = async (title, body, comment) => {
     if (open.has(title)) {
@@ -48,6 +50,20 @@ module.exports = async function syncIssues({ github, context, core, mode }) {
     await upsert(decide.revivedTitle(key),
       [`## Benched entry \`${key}\` drains whole songs again`, "", reasons(key), "", `Un-benched automatically on the NEXT run if still whole (deploy mode: \`${deployMode}\`).`, "", `Run: ${run}`].join("\n"),
       plan.unbench.includes(key) ? `Still whole — **un-benching now** (deploy mode \`${deployMode}\`).\n\nRun: ${run}` : `Still whole on this run.\n\nRun: ${run}`);
+  }
+  for (const key of plan.sabrDead || []) {
+    const benched = (plan.sabrBench || []).includes(key);
+    const refusal = (plan.refused.find((r) => r.key === key && /^SABR/.test(r.reason)) || {}).reason || "see plan";
+    await upsert(decide.sabrIssueTitle(key),
+      [`## \`${key}\` fails every validation video over SABR`, "", sabrReasons(key), "",
+       `Its SABR capability (\`sabr.enabled: false\`) is benched automatically on the NEXT run if still failing (deploy mode: \`${deployMode}\`); the entry keeps streaming progressively.`, "", `Run: ${run}`].join("\n"),
+      benched ? `Still failing over SABR — **benching the SABR capability now** (deploy mode \`${deployMode}\`).\n\n${sabrReasons(key)}\n\nRun: ${run}`
+              : `Still failing over SABR on this run (not benched: ${refusal}).\n\n${sabrReasons(key)}\n\nRun: ${run}`);
+  }
+  for (const key of plan.sabrRevived || []) {
+    await upsert(decide.sabrRevivedTitle(key),
+      [`## \`${key}\` drains whole songs over SABR again (capability benched)`, "", sabrReasons(key), "", `Un-benched automatically on the NEXT run if still whole (deploy mode: \`${deployMode}\`).`, "", `Run: ${run}`].join("\n"),
+      (plan.sabrUnbench || []).includes(key) ? `Still whole — **un-benching the SABR capability now** (deploy mode \`${deployMode}\`).\n\nRun: ${run}` : `Still whole over SABR on this run.\n\nRun: ${run}`);
   }
   for (const key of plan.resurrected) {
     await upsert(decide.resurrectedTitle(key),

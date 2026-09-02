@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { classify, planBenches, planUnbenches, issueTitle, ISSUE_TITLE_RE, revivedTitle, REVIVED_TITLE_RE, driftTitle } from "./decide.mjs";
-import { benchEntryText, verifyBench, unbenchEntryText, verifyUnbench } from "./apply-bench.mjs";
+import { classify, classifySabr, planBenches, planUnbenches, planSabrBenches, issueTitle, ISSUE_TITLE_RE, revivedTitle, REVIVED_TITLE_RE, driftTitle, sabrIssueTitle, sabrRevivedTitle } from "./decide.mjs";
+import { benchEntryText, verifyBench, unbenchEntryText, verifyUnbench, benchSabrText, unbenchSabrText, verifySabrToggle } from "./apply-bench.mjs";
 import { bumpEntryText, verifyBump } from "./apply-bump.mjs";
 
 const r = (video, kind, reason = "") => ({ video, kind, reason });
@@ -104,6 +104,89 @@ test("issue titles have ONE definition: the workflow imports decide.mjs, issues.
   assert.ok(yml.includes(`"${issueTitle("")}"*)`), "notify failing case");
   assert.ok(yml.includes(`"${revivedTitle("")}"*)`), "notify revived case");
   assert.ok(yml.includes(`"${driftTitle("")}"*)`), "notify drift case");
+  assert.ok(yml.includes(`"${sabrIssueTitle("")}"*)`) && yml.includes(`"${sabrRevivedTitle("")}"*)`), "notify SABR cases");
+});
+
+test("classifySabr: only live sabr entries; dead needs sabrConclusive; benched revives on a whole song", () => {
+  const s = { sabrConclusive: true, clients: [
+    { key: "WEB_REMIX", sabr: "live", sabrResults: [r("a", "whole")] },
+    { key: "VISIONOS", sabr: "live", sabrResults: [r("a", "partial", "capped 6/34"), r("b", "sabr-error")] },
+    { key: "TVHTML5_SIMPLY", sabr: "live", sabrResults: [r("a", "partial"), r("b", "bot-gated")] },
+    { key: "WEB_CREATOR", sabr: null, sabrResults: [] },
+    { key: "OLD", sabr: "benched", sabrResults: [r("a", "whole")] },
+    { key: "OLD2", sabr: "benched", sabrResults: [r("a", "no-sabr")] },
+    { key: "RET", role: "retired", sabr: "live", sabrResults: [r("a", "partial")] },
+  ] };
+  const c = classifySabr(s);
+  assert.deepEqual(c.sabrHealthy.map((x) => x.key), ["WEB_REMIX"]);
+  assert.deepEqual(c.sabrDead.map((x) => x.key), ["VISIONOS"]);
+  assert.deepEqual(c.sabrInconclusive.map((x) => x.key), ["TVHTML5_SIMPLY"]);
+  assert.deepEqual(c.sabrRevived.map((x) => x.key), ["OLD"]);
+  assert.deepEqual(c.sabrStillDead.map((x) => x.key), ["OLD2"]);
+  assert.deepEqual(classifySabr({ ...s, sabrConclusive: false }).sabrDead, []);
+  const p = planSabrBenches({ sabrDead: c.sabrDead, previouslyFlagged: [] });
+  assert.deepEqual(p.bench, []); assert.match(p.refused[0].reason, /first sighting/);
+  assert.deepEqual(planSabrBenches({ sabrDead: c.sabrDead, previouslyFlagged: ["VISIONOS"] }).bench, ["VISIONOS"]);
+});
+
+const STABLE = `{
+  "schemaVersion": 1,
+  "clients": [
+    {
+      "key": "WEB_REMIX",
+      "clientName": "WEB_REMIX",
+      "protocol": "web_cipher_pot",
+      "family": "WEB_REMIX",
+      "sabr": { "osName": "Windows", "osVersion": "10.0" }
+    },
+    {
+      "key": "VISIONOS",
+      "clientName": "VISIONOS",
+      "protocol": "direct",
+      "family": "VISIONOS",
+      "sabr": {}
+    },
+    {
+      "key": "TVHTML5_SIMPLY",
+      "clientName": "TVHTML5_SIMPLY",
+      "protocol": "web_cipher_pot",
+      "family": "TVHTML5",
+      "sabr": {
+        "osName": "Cobalt"
+      }
+    },
+    {
+      "key": "WEB_CREATOR",
+      "clientName": "WEB_CREATOR",
+      "protocol": "web_cipher_pot",
+      "family": "WEB_CREATOR"
+    }
+  ]
+}
+`;
+const sParse = (text) => { const d = JSON.parse(text); return { clients: d.clients.filter((c) => c.enabled !== false), skipped: [] }; };
+
+test("SABR bench/un-bench round-trips on one-line, empty and multi-line sabr objects; identity kept; never the chain", () => {
+  for (const key of ["WEB_REMIX", "VISIONOS", "TVHTML5_SIMPLY"]) {
+    const b = benchSabrText(STABLE, key);
+    assert.equal(b.changed, true, key);
+    const parsed = JSON.parse(b.text).clients.find((c) => c.key === key);
+    assert.equal(parsed.sabr.enabled, false, key);
+    verifySabrToggle(STABLE, b.text, key, sParse, true);
+    assert.equal(benchSabrText(b.text, key).changed, false, "idempotent");
+    const u = unbenchSabrText(b.text, key);
+    assert.equal(u.changed, true, key);
+    assert.deepEqual(JSON.parse(u.text), JSON.parse(STABLE), `${key} round-trips semantically`);
+    verifySabrToggle(b.text, u.text, key, sParse, false);
+    assert.equal(unbenchSabrText(STABLE, key).changed, false);
+  }
+  assert.equal(JSON.parse(benchSabrText(STABLE, "WEB_REMIX").text).clients[0].sabr.osName, "Windows", "identity overrides survive a bench");
+  assert.throws(() => benchSabrText(STABLE, "WEB_CREATOR"), /no sabr object/);
+  // The chain never changes: a SABR bench is not an entry bench.
+  assert.deepEqual(sParse(benchSabrText(STABLE, "VISIONOS").text).clients.map((c) => c.key), ["WEB_REMIX", "VISIONOS", "TVHTML5_SIMPLY", "WEB_CREATOR"]);
+  // verify refuses a tampered identity or a second entry.
+  const tampered = benchSabrText(STABLE, "WEB_REMIX").text.replace('"osVersion": "10.0"', '"osVersion": "11"');
+  assert.throws(() => verifySabrToggle(STABLE, tampered, "WEB_REMIX", sParse, true), /identity overrides changed/);
 });
 
 test("issue titles round-trip through the dedup regex", () => {

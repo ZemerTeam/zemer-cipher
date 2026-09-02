@@ -10,7 +10,7 @@
 //            (verified by the scan job) — the only bumps that deploy.
 
 import { appendFileSync, readFileSync } from "node:fs";
-import { classify, planBenches, planUnbenches } from "./decide.mjs";
+import { classify, classifySabr, planBenches, planUnbenches, planSabrBenches } from "./decide.mjs";
 
 const arg = (name) => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; };
 const readJson = (p) => (p ? JSON.parse(readFileSync(p, "utf8")) : null);
@@ -20,12 +20,18 @@ const drift = readJson(arg("--drift")) || { drift: [] };
 const bumps = readJson(arg("--bumps")) || [];
 const flagged = (arg("--flagged") || "").split(/\s+/).filter(Boolean);
 const flaggedRevived = (arg("--flagged-revived") || "").split(/\s+/).filter(Boolean);
+const flaggedSabr = (arg("--flagged-sabr") || "").split(/\s+/).filter(Boolean);
+const flaggedSabrRevived = (arg("--flagged-sabr-revived") || "").split(/\s+/).filter(Boolean);
 const minLiveFallbacks = Number(process.env.MIN_LIVE_FALLBACKS || 2);
 
 const verdict = classify(scan);
 const liveKeys = (scan.clients || []).filter((c) => (c.role || "live") === "live").map((c) => c.key);
 const plan = planBenches({ liveKeys, dead: verdict.dead, previouslyFlagged: flagged, minLiveFallbacks });
 const unplan = planUnbenches({ revived: verdict.revived, previouslyFlagged: flaggedRevived });
+const sabr = classifySabr(scan);
+const sabrPlan = planSabrBenches({ sabrDead: sabr.sabrDead, previouslyFlagged: flaggedSabr });
+const sabrUnplan = planUnbenches({ revived: sabr.sabrRevived, previouslyFlagged: flaggedSabrRevived });
+for (const r of sabrUnplan.refused) r.reason = "SABR: " + r.reason;
 
 const lines = [];
 for (const d of verdict.dead) lines.push(`- ${d.key}: DEAD — ${d.reasons.join("; ")}`);
@@ -36,6 +42,9 @@ for (const d of drift.drift || []) {
 }
 for (const r of verdict.revived) lines.push(`- ${r.key}: benched entry drains whole songs again — ${unplan.unbench.includes(r.key) ? "UN-BENCHING" : "un-bench on the next run if still whole"}`);
 for (const r of verdict.resurrected) lines.push(`- ${r.key}: RETIRED client works again — consider re-adding (human)`);
+for (const d of sabr.sabrDead) lines.push(`- ${d.key}: SABR DEAD — ${d.reasons.join("; ")}${sabrPlan.bench.includes(d.key) ? " — BENCHING the SABR capability" : ""}`);
+for (const r of sabr.sabrRevived) lines.push(`- ${r.key}: SABR works again on a benched capability — ${sabrUnplan.unbench.includes(r.key) ? "UN-BENCHING" : "un-bench on the next run if still whole"}`);
+if (sabr.sabrDead.length === 0 && sabr.sabrRevived.length === 0 && !sabr.conclusive && (scan.clients || []).some((c) => c.sabr === "live" && (c.role || "live") === "live")) lines.push("- SABR pass INCONCLUSIVE (no entry drained a whole song over SABR — runner/cookie/cipher suspect)");
 if (!verdict.conclusive) lines.push("- scan INCONCLUSIVE (no client drained a whole song — runner/cookie/cipher suspect)");
 for (const i of verdict.inconclusive) lines.push(`- ${i.key}: inconclusive — ${i.reasons.join("; ")}`);
 
@@ -48,7 +57,12 @@ const out = {
   resurrected: verdict.resurrected.map((d) => d.key),
   bench: plan.bench,
   unbench: unplan.unbench,
-  refused: [...plan.refused, ...unplan.refused],
+  sabrDead: sabr.sabrDead.map((d) => d.key),
+  sabrHealthy: sabr.sabrHealthy.map((d) => d.key),
+  sabrRevived: sabr.sabrRevived.map((d) => d.key),
+  sabrBench: sabrPlan.bench,
+  sabrUnbench: sabrUnplan.unbench,
+  refused: [...plan.refused, ...unplan.refused, ...sabrPlan.refused, ...sabrUnplan.refused],
   drift: (drift.drift || []).map((d) => d.key),
   bumps,
   summary: lines.join("\n"),
@@ -64,7 +78,10 @@ if (process.env.GITHUB_OUTPUT) {
   set("unbench", out.unbench.join(" "));
   set("revived", out.revived.join(" "));
   set("resurrected", out.resurrected.join(" "));
-  set("action_count", String(out.dead.length + out.revived.length + out.resurrected.length + out.drift.length + (out.conclusive ? 0 : 1)));
+  set("sabr_bench", out.sabrBench.join(" "));
+  set("sabr_unbench", out.sabrUnbench.join(" "));
+  set("sabr_healthy", out.sabrHealthy.join(" "));
+  set("action_count", String(out.dead.length + out.revived.length + out.resurrected.length + out.drift.length + out.sabrDead.length + out.sabrRevived.length + (out.conclusive ? 0 : 1)));
   set("drift", out.drift.join(" "));
   set("bump_keys", bumps.map((b) => b.key).join(" "));
   set("healthy", out.healthy.join(" "));

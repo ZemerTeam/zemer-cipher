@@ -28,8 +28,13 @@ class StreamClientsBundledAssetTest {
     }
 
     @Test
-    fun `bundled asset parses with zero skipped entries`() {
-        assertTrue(parsed().skippedEntries.isEmpty())
+    fun `bundled asset skips nothing but its benched entries`() {
+        // A BENCHED entry (`enabled: false`, what the client-monitor commits unattended when a
+        // fallback stops draining whole songs) is a skip by design; anything else skipped is a
+        // typo that would silently drop a client fleet-wide.
+        val benched = Regex(""""key":\s*"([A-Z0-9_]+)"[^{}]*"enabled":\s*false""")
+            .findAll(assetFile().readText()).map { it.groupValues[1] }.toList()
+        assertEquals("skipped entries must be exactly the benched ones", benched, parsed().skippedEntries)
     }
 
     @Test

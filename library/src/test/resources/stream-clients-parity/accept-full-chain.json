@@ -6,7 +6,7 @@
      "loginSupported": true, "skipHeadValidation": true, "sabr": {"osName": "Windows", "osVersion": "10.0"}},
     {"key": "DIRECT_ONE", "clientName": "DIRECT_ONE", "clientVersion": "1.02", "clientId": "101",
      "userAgent": "Mozilla/5.0 (test)", "protocol": "direct", "family": "DIRECT_ONE",
-     "osName": "visionOS", "osVersion": "1.3", "deviceMake": "Apple", "deviceModel": "RealityDevice14,1", "sabr": {}},
+     "osName": "visionOS", "osVersion": "1.3", "deviceMake": "Apple", "deviceModel": "RealityDevice14,1", "sabr": {"enabled": false}},
     {"key": "BENCHED", "clientName": "BENCHED", "clientVersion": "1.0", "clientId": "2",
      "userAgent": "Mozilla/5.0 (test)", "protocol": "direct", "family": "BENCHED", "enabled": false},
     {"key": "FUTURE", "clientName": "FUTURE", "clientVersion": "1.0", "clientId": "3",

@@ -16,8 +16,10 @@
 //   error | skipped-login                  INCONCLUSIVE — transport hiccup / no cookie for a
 //                                          login-required client; says nothing about the client
 
-/** Verdict kinds that prove the client cannot serve the app right now. */
+/** Verdict kinds that prove the client cannot serve the app right now (progressive drain). */
 export const DEFINITIVE_FAILURES = new Set(["partial", "sabr-only", "no-format", "not-ok", "http-error"]);
+/** The same for the SABR drain (tests/sabr-clients.mjs): a capped or errored session, or no SABR path at all. */
+export const SABR_DEFINITIVE_FAILURES = new Set(["partial", "sabr-error", "no-sabr", "no-format", "not-ok", "http-error"]);
 
 /**
  * Classify a scan. A LIVE client is DEAD only when the scan is conclusive (SOME client drained a
@@ -44,6 +46,41 @@ export function classify(scan) {
     else out.inconclusive.push(entry);
   }
   return out;
+}
+
+/**
+ * Classify the SABR pass. Only LIVE table entries that carry a `sabr` object take part:
+ *   sabr "live"    all-definitive SABR failures on every video (scan sabrConclusive) = sabrDead;
+ *                  a whole song anywhere = sabrHealthy
+ *   sabr "benched" (`sabr.enabled: false`) a whole song anywhere = sabrRevived
+ * The SABR capability is benched/un-benched with the SAME two-run quorum as the chain (issues
+ * "Stream client SABR failing/revived: KEY"), and only ever the `sabr.enabled` flag changes —
+ * the entry keeps streaming progressively and keeps its SABR identity overrides.
+ */
+export function classifySabr(scan) {
+  const out = { conclusive: Boolean(scan?.sabrConclusive), sabrDead: [], sabrHealthy: [], sabrInconclusive: [], sabrRevived: [], sabrStillDead: [] };
+  for (const c of scan?.clients || []) {
+    if ((c.role || "live") !== "live" || !c.sabr) continue;
+    const results = c.sabrResults || [];
+    const entry = { key: c.key, family: c.family, reasons: results.map((r) => `${r.video}: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`) };
+    const whole = results.some((r) => r.kind === "whole");
+    if (c.sabr === "benched") { (whole ? out.sabrRevived : out.sabrStillDead).push(entry); continue; }
+    if (whole) out.sabrHealthy.push(entry);
+    else if (out.conclusive && results.length > 0 && results.every((r) => SABR_DEFINITIVE_FAILURES.has(r.kind))) out.sabrDead.push(entry);
+    else out.sabrInconclusive.push(entry);
+  }
+  return out;
+}
+
+/** SABR benches: second consecutive sighting only; no other refusal (no minimum roster — SABR is an opt-in transport). */
+export function planSabrBenches({ sabrDead, previouslyFlagged }) {
+  const flagged = new Set(previouslyFlagged || []);
+  const bench = [], refused = [];
+  for (const d of sabrDead) {
+    if (flagged.has(d.key)) bench.push(d.key);
+    else refused.push({ key: d.key, reason: "SABR: first sighting — benched only on the next run if still failing" });
+  }
+  return { bench, refused };
 }
 
 /**
@@ -94,5 +131,9 @@ export const ISSUE_TITLE_RE = /^Stream client failing: ([A-Z0-9_]{1,32})$/;
 export const revivedTitle = (key) => `Stream client revived: ${key}`;
 export const REVIVED_TITLE_RE = /^Stream client revived: ([A-Z0-9_]{1,32})$/;
 export const resurrectedTitle = (key) => `Retired client works again: ${key}`;
+export const sabrIssueTitle = (key) => `Stream client SABR failing: ${key}`;
+export const SABR_ISSUE_TITLE_RE = /^Stream client SABR failing: ([A-Z0-9_]{1,32})$/;
+export const sabrRevivedTitle = (key) => `Stream client SABR revived: ${key}`;
+export const SABR_REVIVED_TITLE_RE = /^Stream client SABR revived: ([A-Z0-9_]{1,32})$/;
 export const driftTitle = (key) => `Stream client identity drift: ${key}`;
 export const INCONCLUSIVE_TITLE = "Stream client scan inconclusive";

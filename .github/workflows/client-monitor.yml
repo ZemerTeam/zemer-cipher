@@ -131,6 +131,7 @@ jobs:
       summary: ${{ steps.preplan.outputs.summary }}
       conclusive: ${{ steps.preplan.outputs.conclusive }}
       healthy: ${{ steps.preplan.outputs.healthy }}
+      sabr_healthy: ${{ steps.preplan.outputs.sabr_healthy }}
     steps:
       - name: Checkout zemer-cipher
         uses: actions/checkout@v4
@@ -222,11 +223,16 @@ jobs:
               const fs = require("fs");
               const key = process.argv[1], fields = JSON.parse(process.argv[2]);
               let scan; try { scan = JSON.parse(fs.readFileSync(`/tmp/cand/${key}.scan.json`, "utf8")); } catch { scan = null; }
-              const results = scan?.clients?.find((c) => c.key === key)?.results || [];
-              const whole = results.length > 0 && results.every((r) => r.kind === "whole");
+              const entry = scan?.clients?.find((c) => c.key === key);
+              const results = entry?.results || [];
+              const sabrResults = entry?.sabr === "live" ? (entry.sabrResults || []) : [];
+              // Progressive whole on every video, AND SABR whole on every video when the entry
+              // carries a live SABR capability - a bump must keep both transports working.
+              const whole = results.length > 0 && results.every((r) => r.kind === "whole") &&
+                (entry?.sabr !== "live" || (sabrResults.length > 0 && sabrResults.every((r) => r.kind === "whole")));
               const drift = JSON.parse(fs.readFileSync("/tmp/drift.json", "utf8"));
               const row = drift.drift.find((d) => d.key === key);
-              row.verify = whole ? "verified" : (results.map((r) => `${r.video}: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`).join("; ") || "no result");
+              row.verify = whole ? "verified" : ([...results.map((r) => `${r.video}: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`), ...sabrResults.map((r) => `${r.video} SABR: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`)].join("; ") || "no result");
               fs.writeFileSync("/tmp/drift.json", JSON.stringify(drift, null, 2));
               if (whole) {
                 const bumps = JSON.parse(fs.readFileSync("/tmp/bumps.json", "utf8"));
@@ -271,6 +277,9 @@ jobs:
     outputs:
       bench: ${{ steps.plan.outputs.bench }}
       unbench: ${{ steps.plan.outputs.unbench }}
+      sabr_bench: ${{ steps.plan.outputs.sabr_bench }}
+      sabr_unbench: ${{ steps.plan.outputs.sabr_unbench }}
+      sabr_healthy: ${{ steps.plan.outputs.sabr_healthy }}
       dead: ${{ steps.plan.outputs.dead }}
       healthy: ${{ steps.plan.outputs.healthy }}
       revived: ${{ steps.plan.outputs.revived }}
@@ -316,7 +325,7 @@ jobs:
           github-token: ${{ steps.bot.outputs.token }}
           script: |
             const { pathToFileURL } = require('url');
-            const { ISSUE_TITLE_RE, REVIVED_TITLE_RE } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/tools/clients/decide.mjs`).href);
+            const { ISSUE_TITLE_RE, REVIVED_TITLE_RE, SABR_ISSUE_TITLE_RE, SABR_REVIVED_TITLE_RE } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/tools/clients/decide.mjs`).href);
             const minAgeMs = Number(process.env.MIN_FLAG_AGE_MINUTES || 60) * 60 * 1000;
             const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
@@ -327,6 +336,8 @@ jobs:
             const revived = pick(REVIVED_TITLE_RE, aged);
             core.setOutput('failing', failing.join(' '));
             core.setOutput('revived', revived.join(' '));
+            core.setOutput('sabr_failing', pick(SABR_ISSUE_TITLE_RE, aged).join(' '));
+            core.setOutput('sabr_revived', pick(SABR_REVIVED_TITLE_RE, aged).join(' '));
             core.setOutput('open_titles', JSON.stringify(open.map((i) => [i.number, i.title])));
             console.log(`previously flagged failing: ${failing.join(' ') || '-'}; revived: ${revived.join(' ') || '-'}`);
 
@@ -336,9 +347,12 @@ jobs:
           MIN_LIVE_FALLBACKS: ${{ vars.MIN_LIVE_FALLBACKS }}
           FLAGGED: ${{ steps.flagged.outputs.failing }}
           FLAGGED_REVIVED: ${{ steps.flagged.outputs.revived }}
+          FLAGGED_SABR: ${{ steps.flagged.outputs.sabr_failing }}
+          FLAGGED_SABR_REVIVED: ${{ steps.flagged.outputs.sabr_revived }}
         run: |
           node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json --bumps /tmp/bumps.json \
-            --flagged "$FLAGGED" --flagged-revived "$FLAGGED_REVIVED" | tee /tmp/plan.json
+            --flagged "$FLAGGED" --flagged-revived "$FLAGGED_REVIVED" \
+            --flagged-sabr "$FLAGGED_SABR" --flagged-sabr-revived "$FLAGGED_SABR_REVIVED" | tee /tmp/plan.json
 
       # Issue bookkeeping lives in tools/clients/issues.cjs (titles from decide.mjs). Two steps,
       # two tokens: NEW issues are opened as the Zemer-Dude App (bot avatar); COMMENTS on existing
@@ -399,7 +413,8 @@ jobs:
   deploy:
     needs: [scan, alert]
     if: >-
-      (needs.alert.outputs.bench != '' || needs.alert.outputs.unbench != '' || needs.alert.outputs.bump_keys != '') &&
+      (needs.alert.outputs.bench != '' || needs.alert.outputs.unbench != '' || needs.alert.outputs.bump_keys != '' ||
+       needs.alert.outputs.sabr_bench != '' || needs.alert.outputs.sabr_unbench != '') &&
       (vars.AUTO_DEPLOY_CLIENTS == 'branch' || vars.AUTO_DEPLOY_CLIENTS == 'master')
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -487,6 +502,8 @@ jobs:
         env:
           BENCH: ${{ needs.alert.outputs.bench }}
           UNBENCH: ${{ needs.alert.outputs.unbench }}
+          SABR_BENCH: ${{ needs.alert.outputs.sabr_bench }}
+          SABR_UNBENCH: ${{ needs.alert.outputs.sabr_unbench }}
           # The same floor plan.mjs applied — the writer re-checks it and must agree.
           MIN_LIVE_FALLBACKS: ${{ vars.MIN_LIVE_FALLBACKS }}
         run: |
@@ -510,6 +527,27 @@ jobs:
             git add "$CONFIG_PATH"
             git commit -m "config(clients): un-bench $KEY - drains whole songs again on consecutive scans [skip ci]"
             APPLIED="$APPLIED unbench:$KEY"
+            echo "::endgroup::"
+          done
+          # SABR capability benches / un-benches: `sabr.enabled` only, the entry stays in the chain.
+          for KEY in $SABR_BENCH; do
+            echo "::group::sabr-bench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness --sabr) || { echo "$OUT"; echo "::error::sabr-bench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY SABR already benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): bench the SABR capability of $KEY - failed the SABR whole-song drain on consecutive scans [skip ci]"
+            APPLIED="$APPLIED sabr-bench:$KEY"
+            echo "::endgroup::"
+          done
+          for KEY in $SABR_UNBENCH; do
+            echo "::group::sabr-unbench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness --sabr --unbench) || { echo "$OUT"; echo "::error::sabr-unbench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY SABR not benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): un-bench the SABR capability of $KEY - drains whole songs over SABR again [skip ci]"
+            APPLIED="$APPLIED sabr-unbench:$KEY"
             echo "::endgroup::"
           done
           # Identity bumps: each was verified in the scan job (candidate drained whole songs on
@@ -583,6 +621,8 @@ jobs:
               if (op === "bump") {
                 const fields = (bumps.find((b) => b.key === key) || {}).fields || {};
                 if (!Object.entries(fields).every(([f, v]) => e[f] === v)) bad.push(a);
+              } else if (op === "sabr-bench" || op === "sabr-unbench") {
+                if (!e.sabr || (op === "sabr-bench") !== (e.sabr.enabled === false)) bad.push(a);
               } else if ((op === "bench") !== (e.enabled === false)) bad.push(a);
             }
             process.stdout.write(bad.join(","));
@@ -644,6 +684,7 @@ jobs:
           # From the alert plan when it ran, else from the scan's own pre-plan (a quiet run is
           # exactly when a "failing" client has come back healthy).
           HEALTHY: ${{ needs.alert.outputs.healthy || needs.scan.outputs.healthy }}
+          SABR_HEALTHY: ${{ needs.alert.outputs.sabr_healthy || needs.scan.outputs.sabr_healthy }}
           APPLIED: ${{ needs.deploy.outputs.applied }}
           # Keys STILL drifting after this run (empty when nothing drifts): a drift issue whose key
           # is no longer in it was resolved — by this run's bump or an earlier one.
@@ -654,13 +695,22 @@ jobs:
           gh api "repos/$REPO/contents/$CONFIG_PATH?ref=$TARGET" --jq '.content' 2>/dev/null | base64 -d > /tmp/master.json || { echo "::warning::could not read the $TARGET table"; exit 0; }
           [ -s /tmp/master.json ] || { echo "::warning::empty $TARGET table"; exit 0; }
           BENCHED=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled===false).map(c=>c.key).join(" "))')
+          SABR_BENCHED=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.sabr&&c.sabr.enabled===false).map(c=>c.key).join(" "))')
+          SABR_LIVE=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.sabr&&c.sabr.enabled!==false).map(c=>c.key).join(" "))')
           LIVE=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled!==false).map(c=>c.key).join(" "))')
           close() { gh api --method POST "repos/$REPO/issues/$1/comments" -f body="$2" >/dev/null || true; gh api --method PATCH "repos/$REPO/issues/$1" -f state=closed >/dev/null && echo "closed #$1"; }
           gh issue list --repo "$REPO" --state open --limit 100 --json number,title \
-            --jq '.[] | select(.title | test("^Stream client (failing|revived|identity drift): [A-Z0-9_]{1,32}$")) | [.number, .title] | @tsv' \
+            --jq '.[] | select(.title | test("^Stream client (failing|revived|identity drift|SABR failing|SABR revived): [A-Z0-9_]{1,32}$")) | [.number, .title] | @tsv' \
           | while IFS=$'\t' read -r NUM TITLE; do
               KEY="${TITLE##*: }"
               case "$TITLE" in
+                "Stream client SABR failing: "*)
+                  case " $SABR_BENCHED " in *" $KEY "*) close "$NUM" "Resolved — the SABR capability of \`$KEY\` is benched on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
+                  case " $SABR_HEALTHY " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` drained whole songs over SABR again on this run." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
+                "Stream client SABR revived: "*)
+                  case " $SABR_LIVE " in *" $KEY "*) close "$NUM" "Resolved — the SABR capability of \`$KEY\` is live again on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
                 "Stream client identity drift: "*)
                   case " $APPLIED " in *" bump:$KEY "*) close "$NUM" "Resolved — \`$KEY\` bumped to yt-dlp master on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
                   case " $DRIFT " in *" $KEY "*) echo "#$NUM ($KEY) still drifting" ;; *) close "$NUM" "Resolved — \`$KEY\` no longer drifts from yt-dlp master on $TARGET." ;; esac ;;
@@ -685,6 +735,8 @@ jobs:
           BENCH: ${{ needs.alert.outputs.bench }}
           UNBENCH: ${{ needs.alert.outputs.unbench }}
           BUMPS: ${{ needs.alert.outputs.bump_keys }}
+          SABR_BENCH: ${{ needs.alert.outputs.sabr_bench }}
+          SABR_UNBENCH: ${{ needs.alert.outputs.sabr_unbench }}
           REFUSED: ${{ needs.alert.outputs.refused }}
           DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
@@ -705,9 +757,9 @@ jobs:
           elif [ "$DEPLOY_RESULT" = "failure" ]; then
             HEAD_LINE="Stream-client deploy FAILED"
             ACTION="apply-bench or the parity gate refused it; nothing was pushed. Needs a human."
-          elif [ -n "$BENCH$UNBENCH$BUMPS" ]; then
+          elif [ -n "$BENCH$UNBENCH$BUMPS$SABR_BENCH$SABR_UNBENCH" ]; then
             HEAD_LINE="Stream-client change planned, NOT deployed"
-            ACTION=$(printf "Auto-deploy is off (AUTO_DEPLOY_CLIENTS=%s). Planned: bench [%s] un-bench [%s] bump [%s]." "${DEPLOY_MODE:-unset}" "$BENCH" "$UNBENCH" "$BUMPS")
+            ACTION=$(printf "Auto-deploy is off (AUTO_DEPLOY_CLIENTS=%s). Planned: bench [%s] un-bench [%s] bump [%s] sabr-bench [%s] sabr-unbench [%s]." "${DEPLOY_MODE:-unset}" "$BENCH" "$UNBENCH" "$BUMPS" "$SABR_BENCH" "$SABR_UNBENCH")
           else
             HEAD_LINE="Stream-client monitor: attention"
             ACTION="Nothing benched this run (first sighting, refused, drift, or an inconclusive scan — see the issues)."
