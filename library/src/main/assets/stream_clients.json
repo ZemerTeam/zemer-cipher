@@ -44,7 +44,6 @@
     },
     {
       "key": "WEB_CREATOR",
-      "enabled": false,
       "clientName": "WEB_CREATOR",
       "clientVersion": "1.20260708.06.00",
       "clientId": "62",
