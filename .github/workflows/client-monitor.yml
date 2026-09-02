@@ -48,8 +48,8 @@ name: Stream Client Monitor
     types: [completed]
   schedule:
     # The floor when the chain is quiet (GitHub only runs `schedule` from the DEFAULT branch).
-    # Two consecutive failing runs are the bench quorum.
-    - cron: '17 */3 * * *'
+    # Two consecutive failing runs are the bench quorum (the rate gate holds the 30-minute floor).
+    - cron: '7,37 * * * *'
   workflow_dispatch:
     inputs:
       attempt:
@@ -313,7 +313,9 @@ jobs:
           VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
           # The retired clients feed only the "works again" alert: slot 1 covers them, the other
           # slots drain the table alone (the two transports already run concurrently inside).
-          SKIP_RETIRED: ${{ matrix.slot == 1 && '0' || '1' }}
+          # The retired clients (the "works again" alert) drain on one x64 and one ARM slot: a single
+          # slot is refused about half the time, two independent ones almost never both.
+          SKIP_RETIRED: ${{ (matrix.slot == 1 || matrix.slot == 5) && '0' || '1' }}
           # Both transports drain at once. Measured 2026-09-02 over six runs (odd slots sequential,
           # even concurrent): SABR whole 34/36 concurrent vs 28/30 sequential, every miss a slot
           # whose egress flipped mid-run (postcheck=false) - the mode made no difference, so the
