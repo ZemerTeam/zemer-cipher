@@ -130,6 +130,7 @@ jobs:
       action_count: ${{ steps.preplan.outputs.action_count }}
       summary: ${{ steps.preplan.outputs.summary }}
       conclusive: ${{ steps.preplan.outputs.conclusive }}
+      healthy: ${{ steps.preplan.outputs.healthy }}
     steps:
       - name: Checkout zemer-cipher
         uses: actions/checkout@v4
@@ -337,16 +338,23 @@ jobs:
           node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json --bumps /tmp/bumps.json \
             --flagged "$FLAGGED" --flagged-revived "$FLAGGED_REVIVED" | tee /tmp/plan.json
 
+      # New issues are opened as the Zemer-Dude App (bot avatar); COMMENTS go through the built-in
+      # GITHUB_TOKEN (issues:write on this job) — the App token is not granted comment/close
+      # ('Resource not accessible by integration'), which failed the whole alert job (and with it
+      # the deploy) the first time a second sighting tried to update its issue.
       - name: Open or update detection issues
         uses: actions/github-script@v7
         env:
           OPEN_TITLES: ${{ steps.flagged.outputs.open_titles }}
           DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
         with:
-          github-token: ${{ steps.bot.outputs.token }}
+          github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
+            const { getOctokit } = require('@actions/github');
+            const bot = getOctokit(process.env.BOT_TOKEN);
             const plan = JSON.parse(fs.readFileSync('/tmp/plan.json', 'utf8'));
             const scan = JSON.parse(fs.readFileSync('/tmp/scan.json', 'utf8'));
             const drift = JSON.parse(fs.readFileSync('/tmp/drift.json', 'utf8'));
@@ -361,7 +369,7 @@ jobs:
                 console.log(`updated #${open.get(title)}: ${title}`);
               } else {
                 // No labels: the App token may not create labels, and titles are the dedup key.
-                const { data } = await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
+                const { data } = await bot.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
                 console.log(`opened #${data.number}: ${title}`);
               }
             };
@@ -671,7 +679,9 @@ jobs:
           # Where the table devices/this pipeline read lives: the deploy target when deploy ran,
           # else the branch in branch mode (pre-merge, master has no table), else master.
           TARGET: ${{ needs.deploy.outputs.target || (vars.AUTO_DEPLOY_CLIENTS == 'branch' && github.ref_name) || 'master' }}
-          HEALTHY: ${{ needs.alert.outputs.healthy }}
+          # From the alert plan when it ran, else from the scan's own pre-plan (a quiet run is
+          # exactly when a "failing" client has come back healthy).
+          HEALTHY: ${{ needs.alert.outputs.healthy || needs.scan.outputs.healthy }}
           APPLIED: ${{ needs.deploy.outputs.applied }}
           # Keys STILL drifting after this run (empty when nothing drifts): a drift issue whose key
           # is no longer in it was resolved — by this run's bump or an earlier one.
