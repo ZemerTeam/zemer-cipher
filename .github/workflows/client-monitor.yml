@@ -195,6 +195,11 @@ jobs:
           curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
           sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp >/dev/null
+          # IPv6 ONLY on WARP, for the probes and the drains alike: WARP's v6 pool passes the gate and
+          # the CDN, its shared v4 pool does not (probe: UNPLAYABLE; a slot that verified over v4
+          # then went partial/bot-gated mid-run). FORCE_IPV6 reaches every later harness step.
+          echo "FORCE_IPV6=1" >> "$GITHUB_ENV"
+          export FORCE_IPV6=1
           ok=""
           # Re-registering rarely changes the colo (an IAD runner re-rolled six IAD addresses in a
           # row, all gated), so only two attempts per runner; the cross-runner re-dispatch below is
@@ -207,13 +212,14 @@ jobs:
             if [ $((attempt % 2)) -eq 0 ]; then warp-cli --accept-tos tunnel protocol set MASQUE >/dev/null 2>&1 || true; else warp-cli --accept-tos tunnel protocol set WireGuard >/dev/null 2>&1 || true; fi
             warp-cli --accept-tos connect >/dev/null
             for i in $(seq 1 20); do warp-cli --accept-tos status | grep -q Connected && break; sleep 2; done
-            TRACE=$(curl -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo|ip)=' | tr '\n' ' ')
+            TRACE=$(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo|ip)=' | tr '\n' ' ')
+            case "$TRACE" in *"ip=2"*|*"ip=3"*) ;; *) echo "::warning::no IPv6 egress on this attempt ($TRACE)"; continue ;; esac
             # IPv6 egress on purpose: WARP's shared IPv4 pool answered UNPLAYABLE where the same
             # colo's v6 passed (probe 2026-09-02, SJC), so v4 is never tried here.
             # Clean AND stable: youtube.com reachable, then two app-exact anonymous /player probes
             # a few seconds apart (a fresh tunnel that flaps or is still settling fails here, not
             # in the middle of the drains).
-            if curl -s --max-time 20 -o /dev/null https://www.youtube.com/iframe_api \
+            if curl -6 -s --max-time 20 -o /dev/null https://www.youtube.com/iframe_api \
                && QUICK=1 node harness/tests/probe-bot-gate.mjs && sleep 5 && QUICK=1 node harness/tests/probe-bot-gate.mjs; then
               echo "egress attempt $attempt OK: $TRACE"; ok=1; break
             fi
@@ -325,7 +331,7 @@ jobs:
 
       - name: Record the egress this slot drained through
         run: |
-          echo "slot=${{ matrix.slot }} egress=warp $(curl -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
+          echo "slot=${{ matrix.slot }} egress=warp ipv6=${FORCE_IPV6:-0} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
           cat /tmp/egress.txt
 
       - name: Upload this slot's results
