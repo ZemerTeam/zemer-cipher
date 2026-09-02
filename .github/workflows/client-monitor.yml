@@ -31,10 +31,12 @@ name: Stream Client Monitor
 # to the feature branch while the harness scripts are still only there).
 #
 # EGRESS: GitHub-hosted runners are bot-gated for anonymous InnerTube requests ("Sign in to confirm
-# you're not a bot" on every login-less client) — the runner's IP reputation, not the client. The
-# harness reports those as `bot-gated` (INCONCLUSIVE: never a kill, never a bench). To get the
-# app's real results for login-less clients, set the SCAN_PROXY secret to a residential/mobile
-# egress (http(s):// or socks5://); every harness fetch then goes through it.
+# you're not a bot" on every login-less client) — the runner's IP reputation, not the client
+# (probe-bot-gate.yml, 2026-09-02: every app-exact variant gated from the bare runner; all pass
+# through Cloudflare WARP). So the scan job's DEFAULT egress is WARP (free, no infrastructure):
+# SCAN_EGRESS variable = `warp` (default) | `proxy` (the SCAN_PROXY secret: a residential/mobile
+# http(s):// or socks5:// egress, routed by the harness itself) | `none` (bare runner — anonymous
+# clients come back `bot-gated`, INCONCLUSIVE: never a kill, never a bench).
 
 "on":
   # Chained to the player monitor: every completed run of it (every ~20 min from master) triggers
@@ -153,6 +155,21 @@ jobs:
         with:
           node-version: '20'
 
+      # Residential-grade egress for the drains (see EGRESS above). WARP is connected only around
+      # the drain steps and disconnected before the artifact upload.
+      - name: Connect WARP egress
+        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp >/dev/null
+          warp-cli --accept-tos registration new >/dev/null
+          warp-cli --accept-tos mode warp >/dev/null
+          warp-cli --accept-tos connect >/dev/null
+          for i in $(seq 1 20); do warp-cli --accept-tos status | grep -q Connected && break; sleep 2; done
+          warp-cli --accept-tos status | head -1
+          curl -s https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo)='
+
       - name: Install harness dependencies
         run: |
           npm ci --prefix harness/tests
@@ -176,7 +193,7 @@ jobs:
           YT_COOKIE: ${{ secrets.YT_COOKIE }}
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
           YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
-          SCAN_PROXY: ${{ secrets.SCAN_PROXY }}
+          SCAN_PROXY: ${{ (vars.SCAN_EGRESS || 'warp') == 'proxy' && secrets.SCAN_PROXY || '' }}
           VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
         run: |
           STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
@@ -204,7 +221,7 @@ jobs:
           YT_COOKIE: ${{ secrets.YT_COOKIE }}
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
           YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
-          SCAN_PROXY: ${{ secrets.SCAN_PROXY }}
+          SCAN_PROXY: ${{ (vars.SCAN_EGRESS || 'warp') == 'proxy' && secrets.SCAN_PROXY || '' }}
           VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
         run: |
           mkdir -p /tmp/cand
@@ -246,6 +263,11 @@ jobs:
             echo "::endgroup::"
           done
           echo "verified bumps: $(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/bumps.json','utf8')).map(b=>b.key).join(' ')||'none')")"
+
+      - name: Disconnect WARP egress
+        if: ${{ always() && (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        continue-on-error: true
+        run: warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
 
       # A first pass with no issue history: decides whether ANYTHING needs the alert job at all
       # (dead / revived / resurrected / drift / bumps / inconclusive). The bench quorum needs the
@@ -579,8 +601,27 @@ jobs:
           BOT_TOKEN: ${{ steps.bot.outputs.token }}
           TARGET: ${{ steps.branch.outputs.target }}
         run: |
-          git push "https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}" "HEAD:${TARGET}"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # The target may have moved since checkout (a human push, another bot). The deploy commits
+          # are one-line table edits, so rebase them onto the new tip and retry; a rebase CONFLICT
+          # (someone edited the same entry) aborts with nothing pushed - the next run re-plans.
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          for attempt in 1 2 3 4; do
+            if git push "$REMOTE" "HEAD:${TARGET}" 2>/tmp/push.err; then
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "::warning::push attempt $attempt rejected: $(head -c 200 /tmp/push.err) - rebasing onto the moved ${TARGET}"
+            git fetch --no-tags "$REMOTE" "$TARGET" || { sleep 5; continue; }
+            if ! git rebase FETCH_HEAD; then
+              git rebase --abort || true
+              echo "::error::rebase onto the moved ${TARGET} conflicted - nothing pushed; the next run re-plans"
+              exit 1
+            fi
+            # The rebased commits must still be exactly the planned one-entry edits: re-run the gate.
+            ./gradlew --no-daemon -q :library:test || { echo "::error::parity gate failed after rebase - nothing pushed"; exit 1; }
+            sleep $((attempt * 3))
+          done
+          echo "::error::could not push after retries - nothing deployed"
+          exit 1
 
       # Read the deployed file back over the GIT protocol (immediately consistent; the contents API
       # and raw.githubusercontent lag and once caused a good deploy to be rolled back). A failed

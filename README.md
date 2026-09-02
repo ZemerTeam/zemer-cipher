@@ -138,7 +138,12 @@ supplies the harness. Secrets: `YT_COOKIE` / `YT_VISITOR_DATA` / `YT_DATASYNC_ID
 clients are skipped without a cookie), `SCAN_PROXY` (a residential/mobile egress URL — GitHub's
 runners are bot-gated for anonymous InnerTube requests, so without it the login-less clients stay
 `bot-gated`/inconclusive and only the cookie-authenticated ones are judged), and the variable
-`VALIDATION_VIDEO_IDS` (comma-separated; more videos = a stronger quorum). **Include gated content**: on
+`VALIDATION_VIDEO_IDS` (comma-separated; more videos = a stronger quorum). **Egress**: the scan job
+connects Cloudflare WARP by default (`SCAN_EGRESS` = `warp` | `proxy` | `none`): GitHub's runners are
+bot-gated for every anonymous request (`probe-bot-gate.yml` measured 2026-09-02: app-exact,
+fresh-visitor and pot-carrying variants all gated from the bare runner; all pass through WARP), and
+only through a residential-grade egress do the login-less clients get the app's own results.
+**Include gated content**: on
 an ungated video (measured 2026-09-01 with `dQw4w9WgXcQ`) even the retired IOS, MWEB and ANDROID_VR
 clients drain whole songs, progressively and over SABR. "Dead" needs failure on every video and
 "revived / works again" needs a whole song on every video, so a validation set without a gated
