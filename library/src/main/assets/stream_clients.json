@@ -45,12 +45,11 @@
     {
       "key": "WEB_CREATOR",
       "clientName": "WEB_CREATOR",
-      "clientVersion": "1.20260708.06.00",
+      "clientVersion": "0.0.1",
       "clientId": "62",
       "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
       "protocol": "web_cipher_pot",
       "family": "WEB_CREATOR",
-      "mirrors": "web_creator",
       "loginSupported": true,
       "loginRequired": true
     },
