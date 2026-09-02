@@ -314,10 +314,12 @@ jobs:
           # The retired clients feed only the "works again" alert: slot 1 covers them, the other
           # slots drain the table alone (the two transports already run concurrently inside).
           SKIP_RETIRED: ${{ matrix.slot == 1 && '0' || '1' }}
-          # A/B under measurement: odd slots drain the two transports one after the other, even
-          # slots concurrently (faster, but two streams share one tunnel). report-runs.mjs shows the
-          # SABR agreement per mode; the loser goes.
-          SCAN_PASSES: ${{ contains(fromJSON('[1,3,5,7]'), matrix.slot) && 'sequential' || 'concurrent' }}
+          # Both transports drain at once. Measured 2026-09-02 over six runs (odd slots sequential,
+          # even concurrent): SABR whole 34/36 concurrent vs 28/30 sequential, every miss a slot
+          # whose egress flipped mid-run (postcheck=false) - the mode made no difference, so the
+          # faster one stays. The harness's SABR session refresh covers the mid-drain 403s that
+          # motivated the A/B.
+          SCAN_PASSES: concurrent
         run: |
           STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
             node harness/tests/scan-stream-clients.mjs > /tmp/scan.json 2> /tmp/scan.log \
@@ -417,7 +419,7 @@ jobs:
 
       - name: Record the egress this slot drained through
         run: |
-          echo "slot=${{ matrix.slot }} runner=${{ matrix.runner }} passes=${{ contains(fromJSON('[1,3,5,7]'), matrix.slot) && 'sequential' || 'concurrent' }} egress=warp ipv6=${FORCE_IPV6:-0} postcheck=${{ steps.postcheck.outputs.clean || 'n/a' }} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
+          echo "slot=${{ matrix.slot }} runner=${{ matrix.runner }} passes=concurrent egress=warp ipv6=${FORCE_IPV6:-0} postcheck=${{ steps.postcheck.outputs.clean || 'n/a' }} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
           cat /tmp/egress.txt
 
       - name: Disconnect WARP egress
