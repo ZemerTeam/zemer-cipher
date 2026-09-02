@@ -57,14 +57,17 @@ class StreamClientsBundledAssetTest {
         // The SABR resolvers offer exactly these, in this order (WEB_REMIX identifies itself as
         // Windows 10.0 in the SABR streamerContext, its /player context stays OS-less). Adding or
         // removing a `sabr` object is a deliberate roster change that updates this test.
-        val sabrEntries = parsed().config.clients.filter { it.sabr != null }
-        val sabr = sabrEntries.map { it.key }
+        // Entries CARRYING a sabr object (capability benched or not) are the canonical trio in
+        // order; the LIVE roster is that minus any benched capability (`sabr.enabled: false`, the
+        // client-monitor's SABR kill switch). WEB_REMIX keeps its Windows identity either way.
+        val carrying = parsed().config.clients.filter { it.sabr != null }
         val canonical = listOf("WEB_REMIX", "VISIONOS", "TVHTML5_SIMPLY")
-        assertEquals("SABR roster must be a subsequence of $canonical, got $sabr", sabr, canonical.filter { it in sabr })
-        assertEquals("WEB_REMIX", sabr.first())
+        assertEquals("sabr-carrying entries must be $canonical, got ${carrying.map { it.key }}", canonical, carrying.map { it.key })
+        val live = carrying.filter { it.sabr!!.enabled }.map { it.key }
+        assertEquals("live SABR roster must be a subsequence of $canonical, got $live", live, canonical.filter { it in live })
         assertEquals(
             StreamClientParser.StreamClientDef.SabrInfo(osName = "Windows", osVersion = "10.0"),
-            sabrEntries.first { it.key == "WEB_REMIX" }.sabr,
+            carrying.first { it.key == "WEB_REMIX" }.sabr!!.copy(enabled = true),
         )
     }
 
@@ -88,8 +91,10 @@ class StreamClientsBundledAssetTest {
 
     @Test
     fun `login-required entries are the authenticated cipher fallbacks`() {
+        // Any of these may be BENCHED by the client-monitor (absent from the live chain); the flag
+        // shape is asserted for whichever are live.
         val byKey = parsed().config.clients.associateBy { it.key }
-        assertTrue(byKey.getValue("WEB_CREATOR").loginRequired)
-        assertTrue(byKey.getValue("VISIONOS").let { !it.loginRequired && !it.loginSupported })
+        byKey["WEB_CREATOR"]?.let { assertTrue(it.loginRequired) }
+        byKey["VISIONOS"]?.let { assertTrue(!it.loginRequired && !it.loginSupported) }
     }
 }

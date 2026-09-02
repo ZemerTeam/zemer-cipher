@@ -36,8 +36,13 @@ export function classify(scan) {
     const role = c.role || "live";
     const entry = { key: c.key, family: c.family, role, main: Boolean(c.main), reasons: results.map((r) => `${r.video}: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`) };
     const whole = results.some((r) => r.kind === "whole");
+    // Revival / resurrection are STRICT: whole on EVERY validation video. An ungated video (the
+    // 2026-09-01 sweep: dQw4w9WgXcQ streams whole for IOS, MWEB, even ANDROID_VR) must never
+    // un-bench a client that is still walled on gated content, nor open "works again" issues
+    // for retired clients every run.
+    const everyWhole = results.length > 0 && results.every((r) => r.kind === "whole");
     if (role !== "live") {
-      if (whole) (role === "benched" ? out.revived : out.resurrected).push(entry);
+      if (everyWhole) (role === "benched" ? out.revived : out.resurrected).push(entry);
       else out.stillDead.push(entry);
       continue;
     }
@@ -64,7 +69,15 @@ export function classifySabr(scan) {
     const results = c.sabrResults || [];
     const entry = { key: c.key, family: c.family, reasons: results.map((r) => `${r.video}: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`) };
     const whole = results.some((r) => r.kind === "whole");
-    if (c.sabr === "benched") { (whole ? out.sabrRevived : out.sabrStillDead).push(entry); continue; }
+    const everyWhole = results.length > 0 && results.every((r) => r.kind === "whole");
+    if (c.sabr === "benched") { (everyWhole ? out.sabrRevived : out.sabrStillDead).push(entry); continue; }
+    // An entry that is failing PROGRESSIVELY on every video is not a SABR verdict: its /player
+    // is what is broken (a dead main, a retired version). That is the chain's business (bench /
+    // human / bump) - toggling its SABR flag on top would be noise, so it stays inconclusive here.
+    const progressive = c.results || [];
+    if (!whole && progressive.length > 0 && progressive.every((r) => DEFINITIVE_FAILURES.has(r.kind))) {
+      out.sabrInconclusive.push({ ...entry, reasons: ["entry itself failing progressively - not a SABR verdict"] }); continue;
+    }
     if (whole) out.sabrHealthy.push(entry);
     else if (out.conclusive && results.length > 0 && results.every((r) => SABR_DEFINITIVE_FAILURES.has(r.kind))) out.sabrDead.push(entry);
     else out.sabrInconclusive.push(entry);

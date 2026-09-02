@@ -70,13 +70,13 @@ test("planBenches: never below the minimum live fallbacks, counting benches made
   assert.deepEqual(strict.bench, []);
 });
 
-test("classify: benched and retired roles never count as dead; a whole song revives/resurrects them", () => {
+test("classify: benched and retired roles never count as dead; whole on EVERY video revives/resurrects, one ungated whole does not", () => {
   const c = classify(scan(true, [
     { key: "WEB_REMIX", main: true, results: [r("a", "whole")] },
-    { key: "VISIONOS_0_1", role: "benched", results: [r("a", "whole")] },
-    { key: "WEB_CREATOR", role: "benched", results: [r("a", "partial")] },
-    { key: "MWEB", role: "retired", results: [r("a", "whole")] },
-    { key: "IOS", role: "retired", results: [r("a", "partial"), r("b", "not-ok")] },
+    { key: "VISIONOS_0_1", role: "benched", results: [r("a", "whole"), r("b", "whole")] },
+    { key: "WEB_CREATOR", role: "benched", results: [r("a", "partial"), r("b", "whole")] },   // whole on the ungated video only
+    { key: "MWEB", role: "retired", results: [r("a", "whole"), r("b", "whole")] },
+    { key: "IOS", role: "retired", results: [r("a", "partial"), r("b", "whole")] },
   ]));
   assert.deepEqual(c.dead, []);
   assert.deepEqual(c.revived.map((x) => x.key), ["VISIONOS_0_1"]);
@@ -114,7 +114,7 @@ test("classifySabr: only live sabr entries; dead needs sabrConclusive; benched r
     { key: "TVHTML5_SIMPLY", sabr: "live", sabrResults: [r("a", "partial"), r("b", "bot-gated")] },
     { key: "WEB_CREATOR", sabr: null, sabrResults: [] },
     { key: "OLD", sabr: "benched", sabrResults: [r("a", "whole")] },
-    { key: "OLD2", sabr: "benched", sabrResults: [r("a", "no-sabr")] },
+    { key: "OLD2", sabr: "benched", sabrResults: [r("a", "no-sabr"), r("b", "whole")] },
     { key: "RET", role: "retired", sabr: "live", sabrResults: [r("a", "partial")] },
   ] };
   const c = classifySabr(s);

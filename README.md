@@ -114,10 +114,10 @@ each outcome has one response:
 | Observation (on every validation video) | Action |
 |---|---|
 | a live entry fails, two consecutive runs | **bench** it (`enabled: false`) and deploy |
-| a benched entry drains whole songs, two consecutive runs | **un-bench** it and deploy |
+| a benched entry drains whole songs on EVERY validation video, two consecutive runs | **un-bench** it and deploy |
 | a `sabr`-capable entry fails over SABR on every video, two consecutive runs (`tests/sabr-clients.mjs` drain, the same scan) | **bench its SABR capability** (`sabr.enabled: false`) and deploy — the entry keeps streaming progressively and keeps its SABR identity overrides |
 | a SABR-benched entry drains whole songs over SABR, two consecutive runs | **un-bench the SABR capability** and deploy |
-| a retired client drains a whole song | issue *Retired client works again* (re-adding is a human, validated table change) |
+| a retired client drains whole songs on EVERY validation video | issue *Retired client works again* (re-adding is a human, validated table change) |
 | an entry's identity (clientVersion, userAgent, os/device) is behind yt-dlp master (`tests/scan-client-versions.mjs`, per the entry's `mirrors` key) | **bump** it: the entry is copied into a candidate table with yt-dlp's values (`tools/clients/apply-bump.mjs --out`), the candidate must drain a whole song on EVERY validation video, then it deploys; an unverified candidate only opens an *identity drift* issue with the reason |
 | no client at all drained a whole song | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table (a dead MAIN with healthy fallbacks is reported as dead — a human decision — and its yt-dlp bump can revive it) |
 | "Sign in to confirm you're not a bot" on an anonymous request | `bot-gated` = INCONCLUSIVE (the runner's IP, not the client): never a kill, never a bench, never a verified bump |
@@ -138,7 +138,11 @@ supplies the harness. Secrets: `YT_COOKIE` / `YT_VISITOR_DATA` / `YT_DATASYNC_ID
 clients are skipped without a cookie), `SCAN_PROXY` (a residential/mobile egress URL — GitHub's
 runners are bot-gated for anonymous InnerTube requests, so without it the login-less clients stay
 `bot-gated`/inconclusive and only the cookie-authenticated ones are judged), and the variable
-`VALIDATION_VIDEO_IDS` (comma-separated; more videos = a stronger quorum).
+`VALIDATION_VIDEO_IDS` (comma-separated; more videos = a stronger quorum). **Include gated content**: on
+an ungated video (measured 2026-09-01 with `dQw4w9WgXcQ`) even the retired IOS, MWEB and ANDROID_VR
+clients drain whole songs, progressively and over SABR. "Dead" needs failure on every video and
+"revived / works again" needs a whole song on every video, so a validation set without a gated
+video can neither bench a walled client nor keep one benched. The default `JTF9fLJvniI` is gated.
 
 Entry field the harness reads and the app ignores: `mirrors` — the yt-dlp `INNERTUBE_CLIENTS` key
 whose identity the entry follows (`web_music`, `visionos`, ...). An entry without it is pinned on
