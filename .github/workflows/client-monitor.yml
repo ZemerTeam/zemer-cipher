@@ -609,8 +609,10 @@ jobs:
     permissions:
       issues: write
     steps:
-      # Close what master has resolved: a "failing" issue whose entry is now benched on master or
-      # drained whole songs this run; a "revived" issue whose entry is live again on master.
+      # Close what the DEPLOY TARGET has resolved (master in master mode, the run's branch in branch
+      # mode, master when deploy was skipped): a "failing" issue whose entry is now benched there
+      # or drained whole songs this run; a "revived" issue whose entry is live again there; an
+      # "identity drift" issue whose bump was applied this run.
       - name: Close resolved detection issues
         if: always()
         continue-on-error: true
@@ -618,10 +620,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ needs.deploy.outputs.sha }}
+          TARGET: ${{ needs.deploy.outputs.target || 'master' }}
           HEALTHY: ${{ needs.alert.outputs.healthy }}
           APPLIED: ${{ needs.deploy.outputs.applied }}
+          # Keys STILL drifting after this run (empty when nothing drifts): a drift issue whose key
+          # is no longer in it was resolved — by this run's bump or an earlier one.
+          DRIFT: ${{ needs.alert.outputs.drift }}
         run: |
-          gh api "repos/$REPO/contents/$CONFIG_PATH?ref=master" --jq '.content' 2>/dev/null | base64 -d > /tmp/master.json || { echo "::warning::could not read master table"; exit 0; }
+          gh api "repos/$REPO/contents/$CONFIG_PATH?ref=$TARGET" --jq '.content' 2>/dev/null | base64 -d > /tmp/master.json || { echo "::warning::could not read the $TARGET table"; exit 0; }
           BENCHED=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled===false).map(c=>c.key).join(" "))')
           LIVE=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled!==false).map(c=>c.key).join(" "))')
           close() { gh api --method POST "repos/$REPO/issues/$1/comments" -f body="$2" >/dev/null || true; gh api --method PATCH "repos/$REPO/issues/$1" -f state=closed >/dev/null && echo "closed #$1"; }
@@ -631,14 +637,14 @@ jobs:
               KEY="${TITLE##*: }"
               case "$TITLE" in
                 "Stream client identity drift: "*)
-                  case " $APPLIED " in *" bump:$KEY "*) close "$NUM" "Resolved — \`$KEY\` bumped to yt-dlp master on ${SHA:-master}." ; continue ;; esac
-                  echo "#$NUM ($KEY) still open" ;;
+                  case " $APPLIED " in *" bump:$KEY "*) close "$NUM" "Resolved — \`$KEY\` bumped to yt-dlp master on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
+                  case " $DRIFT " in *" $KEY "*) echo "#$NUM ($KEY) still drifting" ;; *) close "$NUM" "Resolved — \`$KEY\` no longer drifts from yt-dlp master on $TARGET." ;; esac ;;
                 "Stream client failing: "*)
-                  case " $BENCHED " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is benched on master${SHA:+ ($SHA)}. Devices pick it up within 6 h." ; continue ;; esac
+                  case " $BENCHED " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is benched on $TARGET${SHA:+ ($SHA)}. Devices pick it up within 6 h." ; continue ;; esac
                   case " $HEALTHY " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` drained whole songs again on this run." ; continue ;; esac
                   echo "#$NUM ($KEY) still open" ;;
                 "Stream client revived: "*)
-                  case " $LIVE " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is live again on master${SHA:+ ($SHA)}." ; continue ;; esac
+                  case " $LIVE " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is live again on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
                   echo "#$NUM ($KEY) still open" ;;
               esac
             done
