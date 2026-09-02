@@ -238,6 +238,9 @@ jobs:
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
           STREAM_CLIENTS_JSON: ${{ github.workspace }}/library/src/main/assets/stream_clients.json
           EGRESS_ATTEMPTS: ${{ vars.EGRESS_ATTEMPTS }}
+          # Colos whose WARP pool never passed after a failed first attempt (IAD 0/7, MSP 0/7 over
+          # six runs, 2026-09-02) - a slot there stops after one attempt instead of burning ~40 s.
+          GATED_COLOS: ${{ vars.GATED_COLOS || 'IAD MSP' }}
         run: |
           curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
@@ -248,10 +251,10 @@ jobs:
           echo "FORCE_IPV6=1" >> "$GITHUB_ENV"
           export FORCE_IPV6=1
           ok=""
-          # Re-registering rarely changes the colo (an IAD runner re-rolled six IAD addresses in a
-          # row, all gated), so only two attempts per runner; the cross-runner re-dispatch below is
-          # the lever that actually moves colo.
-          for attempt in $(seq 1 "${EGRESS_ATTEMPTS:-2}"); do
+          # Re-registering never changes the colo, but within a colo that passes at all a re-roll
+          # rescued 3 of ~10 failed first attempts (SJC, ORD, SEA), so three attempts there; a colo
+          # in GATED_COLOS gets one. The cross-runner re-dispatch below is what actually moves colo.
+          for attempt in $(seq 1 "${EGRESS_ATTEMPTS:-3}"); do
             warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
             warp-cli --accept-tos registration delete >/dev/null 2>&1 || true
             warp-cli --accept-tos registration new >/dev/null
@@ -278,9 +281,11 @@ jobs:
               echo "egress attempt $attempt OK: $TRACE"; ok=1; break
             fi
             echo "::warning::egress attempt $attempt not clean/stable ($TRACE) - re-rolling"
+            COLO=$(echo "$TRACE" | grep -o 'colo=[A-Z]*' | cut -d= -f2)
+            if [ -n "$COLO" ] && echo " $GATED_COLOS " | grep -q " $COLO "; then echo "::notice::colo $COLO is in GATED_COLOS - no re-roll on this runner"; break; fi
           done
           if [ -z "$ok" ]; then
-            echo "::warning::no WARP egress passed the bot gate after ${EGRESS_ATTEMPTS:-2} attempts on this runner"
+            echo "::warning::no WARP egress passed the bot gate on this runner"
             echo "verified=false" >> "$GITHUB_OUTPUT"
           else
             echo "verified=true" >> "$GITHUB_OUTPUT"
