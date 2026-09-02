@@ -377,7 +377,10 @@ jobs:
           # A slot whose egress is no longer clean AFTER the drains is only PARTIALLY trusted: its
           # whole songs are real evidence (they happened), its failures may be the tunnel's. The
           # flag rides in scan.json; merge-slots keeps only the whole verdicts of such a slot.
-          if QUICK=1 node harness/tests/probe-bot-gate.mjs; then
+          # One retry after a pause: a CDN range right after a drain burst can be throttled for a
+          # moment without the egress having flipped - demoting a slot on that alone would starve a
+          # real kill of the unanimous failures it needs.
+          if QUICK=1 node harness/tests/probe-bot-gate.mjs || { sleep 15; QUICK=1 node harness/tests/probe-bot-gate.mjs; }; then
             node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/scan.json","utf8"));s.postcheckClean=true;fs.writeFileSync("/tmp/scan.json",JSON.stringify(s,null,2))'
             echo "clean=true" >> "$GITHUB_OUTPUT"
           else
