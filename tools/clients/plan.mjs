@@ -46,6 +46,7 @@ for (const d of sabr.sabrDead) lines.push(`- ${d.key}: SABR DEAD — ${d.reasons
 for (const r of sabr.sabrRevived) lines.push(`- ${r.key}: SABR works again on a benched capability — ${sabrUnplan.unbench.includes(r.key) ? "UN-BENCHING" : "un-bench on the next run if still whole"}`);
 if (sabr.sabrDead.length === 0 && sabr.sabrRevived.length === 0 && !sabr.conclusive && (scan.clients || []).some((c) => c.sabr === "live" && (c.role || "live") === "live")) lines.push("- SABR pass INCONCLUSIVE (no entry drained a whole song over SABR — runner/cookie/cipher suspect)");
 if (!verdict.conclusive) lines.push("- scan INCONCLUSIVE (no client drained a whole song — runner/cookie/cipher suspect)");
+if (verdict.egressSuspect) lines.push("- ANONYMOUS EGRESS SUSPECT: every login-less client failed while every cookie client drained whole — the runner's egress, not the clients; nothing benched");
 for (const i of verdict.inconclusive) lines.push(`- ${i.key}: inconclusive — ${i.reasons.join("; ")}`);
 
 const out = {
@@ -81,7 +82,8 @@ if (process.env.GITHUB_OUTPUT) {
   set("sabr_bench", out.sabrBench.join(" "));
   set("sabr_unbench", out.sabrUnbench.join(" "));
   set("sabr_healthy", out.sabrHealthy.join(" "));
-  set("action_count", String(out.dead.length + out.revived.length + out.resurrected.length + out.drift.length + out.sabrDead.length + out.sabrRevived.length + (out.conclusive ? 0 : 1)));
+  set("egress_suspect", String(Boolean(verdict.egressSuspect)));
+  set("action_count", String(out.dead.length + out.revived.length + out.resurrected.length + out.drift.length + out.sabrDead.length + out.sabrRevived.length + (out.conclusive ? 0 : 1) + (verdict.egressSuspect ? 1 : 0)));
   set("drift", out.drift.join(" "));
   set("bump_keys", bumps.map((b) => b.key).join(" "));
   set("healthy", out.healthy.join(" "));

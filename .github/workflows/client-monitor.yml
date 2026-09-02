@@ -324,6 +324,22 @@ jobs:
           done
           echo "verified bumps: $(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/bumps.json','utf8')).map(b=>b.key).join(' ')||'none')")"
 
+      # The egress must still be clean AFTER the drains (a tunnel that flipped mid-run would have
+      # produced the runner's verdicts, not the clients'): re-verify, and if it fails this slot
+      # uploads nothing - collect never sees it.
+      - name: Re-verify the egress after the drains
+        id: postcheck
+        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          STREAM_CLIENTS_JSON: ${{ github.workspace }}/library/src/main/assets/stream_clients.json
+        run: |
+          if QUICK=1 node harness/tests/probe-bot-gate.mjs; then echo "clean=true" >> "$GITHUB_OUTPUT"; else
+            echo "::warning::slot ${{ matrix.slot }}: egress NOT clean after the drains - discarding this slot's results"
+            echo "clean=false" >> "$GITHUB_OUTPUT"; exit 1
+          fi
+
       - name: Record the egress this slot drained through
         run: |
           echo "slot=${{ matrix.slot }} egress=warp ipv6=${FORCE_IPV6:-0} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt

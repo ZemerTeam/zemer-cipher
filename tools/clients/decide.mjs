@@ -30,7 +30,18 @@ export const SABR_DEFINITIVE_FAILURES = new Set(["partial", "sabr-error", "no-sa
  * that keep failing are simply `stillDead` (no action, no alert — that is their expected state).
  */
 export function classify(scan) {
-  const out = { conclusive: Boolean(scan?.conclusive), dead: [], healthy: [], inconclusive: [], revived: [], resurrected: [], stillDead: [] };
+  const out = { conclusive: Boolean(scan?.conclusive), dead: [], healthy: [], inconclusive: [], revived: [], resurrected: [], stillDead: [], egressSuspect: false };
+  // Egress guard: the runner's IP can be clean for cookie-authenticated requests and walled for
+  // anonymous ones (WARP's v4 pool: "403 after 0KB" on every login-less client at once). Three
+  // independent clients dying in the same run is far less likely than one egress artifact, so
+  // when EVERY anonymous live client fails while EVERY cookie client drains whole, the anonymous
+  // verdicts are inconclusive - a human sees "egress suspect", nothing is benched.
+  const live = (scan?.clients || []).filter((c) => (c.role || "live") === "live");
+  const anon = live.filter((c) => !c.loginRequired && !c.loginSupported);
+  const login = live.filter((c) => c.loginRequired || c.loginSupported);
+  const wholeSomewhere = (c) => (c.results || []).some((r) => r.kind === "whole");
+  const allFail = (c) => (c.results || []).length > 0 && (c.results || []).every((r) => DEFINITIVE_FAILURES.has(r.kind));
+  if (anon.length >= 2 && anon.every(allFail) && login.length > 0 && login.every(wholeSomewhere)) out.egressSuspect = true;
   for (const c of scan?.clients || []) {
     const results = c.results || [];
     const role = c.role || "live";
@@ -47,6 +58,7 @@ export function classify(scan) {
       continue;
     }
     if (whole) out.healthy.push(entry);
+    else if (out.egressSuspect && !c.loginRequired && !c.loginSupported) out.inconclusive.push({ ...entry, reasons: ["anonymous egress suspect - every login-less client failed while every cookie client drained whole"] });
     else if (out.conclusive && results.length > 0 && results.every((r) => DEFINITIVE_FAILURES.has(r.kind))) out.dead.push(entry);
     else out.inconclusive.push(entry);
   }

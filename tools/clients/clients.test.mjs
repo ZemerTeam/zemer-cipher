@@ -27,6 +27,28 @@ test("classify: one whole song anywhere is healthy; all-definitive failures are 
   assert.equal(c.dead[0].reasons[0], "a: partial (403 after 0KB)");
 });
 
+test("classify: every anonymous client failing while every cookie client is whole is an egress artifact, never three deaths", () => {
+  const s = scan(true, [
+    { key: "WEB_REMIX", main: true, loginSupported: true, results: [r("a", "whole")] },
+    { key: "VISIONOS", results: [r("a", "partial", "403 after 0KB")] },
+    { key: "VISIONOS_0_1", results: [r("a", "partial", "403 after 0KB")] },
+    { key: "WEB_CREATOR", loginSupported: true, loginRequired: true, results: [r("a", "whole")] },
+    { key: "TVHTML5_SIMPLY", results: [r("a", "partial", "403 after 0KB")] },
+  ]);
+  const c = classify(s);
+  assert.equal(c.egressSuspect, true);
+  assert.deepEqual(c.dead, []);
+  assert.deepEqual(c.inconclusive.map((x) => x.key), ["VISIONOS", "VISIONOS_0_1", "TVHTML5_SIMPLY"]);
+  assert.match(c.inconclusive[0].reasons[0], /egress suspect/);
+  // One anonymous client dying while another anonymous one is whole IS a real verdict.
+  const real = classify(scan(true, [
+    { key: "WEB_REMIX", main: true, loginSupported: true, results: [r("a", "whole")] },
+    { key: "VISIONOS", results: [r("a", "whole")] },
+    { key: "TVHTML5_SIMPLY", results: [r("a", "partial", "403 after 0KB")] },
+  ]));
+  assert.equal(real.egressSuspect, false); assert.deepEqual(real.dead.map((x) => x.key), ["TVHTML5_SIMPLY"]);
+});
+
 test("classify: an inconclusive scan (main never drained) declares nothing dead", () => {
   const s = scan(false, [
     { key: "WEB_REMIX", main: true, results: [r("a", "partial")] },
