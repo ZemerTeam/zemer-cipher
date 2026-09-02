@@ -390,21 +390,33 @@ jobs:
         with:
           pattern: client-scan-slot-*
           path: /tmp/slots
-      - name: Pick the first verified slot
+      # Among the slots whose egress verified before AND after, prefer the one with the most whole
+      # songs and the fewest transport errors: every verified slot is legitimate evidence, and a
+      # tunnel hiccup in one must not outrank a clean drain in another.
+      - name: Pick the best verified slot
         id: pick
         run: |
           ls -d /tmp/slots/client-scan-slot-* 2>/dev/null || true
-          for d in /tmp/slots/client-scan-slot-1 /tmp/slots/client-scan-slot-2 /tmp/slots/client-scan-slot-3 /tmp/slots/client-scan-slot-4; do
-            if [ -s "$d/scan.json" ]; then
-              cp "$d"/scan.json "$d"/drift.json "$d"/bumps.json "$d"/scan.log "$d"/egress.txt /tmp/ 2>/dev/null || true
-              echo "using $(cat "$d/egress.txt")"
-              echo "verified=true" >> "$GITHUB_OUTPUT"; echo "slot=$(basename "$d")" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done
-          echo "::error::no slot verified its egress - nothing scanned this run"
-          echo "verified=false" >> "$GITHUB_OUTPUT"
-          exit 1
+          BEST=$(node -e '
+            const fs = require("fs");
+            let best = null;
+            for (const d of fs.readdirSync("/tmp/slots").map((n) => "/tmp/slots/" + n).sort()) {
+              let s; try { s = JSON.parse(fs.readFileSync(d + "/scan.json", "utf8")); } catch { continue; }
+              const all = s.clients.flatMap((c) => [...(c.results || []), ...(c.sabrResults || [])]);
+              const score = all.filter((r) => r.kind === "whole").length * 10 - all.filter((r) => r.kind === "error").length;
+              console.error(`${d}: score ${score}`);
+              if (!best || score > best.score) best = { d, score };
+            }
+            process.stdout.write(best ? best.d : "");
+          ')
+          if [ -z "$BEST" ]; then
+            echo "::error::no slot verified its egress - nothing scanned this run"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          cp "$BEST"/scan.json "$BEST"/drift.json "$BEST"/bumps.json "$BEST"/scan.log "$BEST"/egress.txt /tmp/ 2>/dev/null || true
+          echo "using $(cat "$BEST/egress.txt")"
+          echo "verified=true" >> "$GITHUB_OUTPUT"; echo "slot=$(basename "$BEST")" >> "$GITHUB_OUTPUT"
 
       # A first pass with no issue history: decides whether ANYTHING needs the alert job at all
       # (dead / revived / resurrected / drift / bumps / inconclusive). The bench quorum needs the
