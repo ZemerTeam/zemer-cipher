@@ -152,9 +152,10 @@ the tunnel protocol — up to `EGRESS_ATTEMPTS` (default 2) times until it passe
 IPv4 pool answered UNPLAYABLE where the same colo's v6 passed). The scan runs as SIX parallel egress
 slots (six runners, six regions, six colos): only a slot whose egress verified - before AND
 after its drains, with a `/player` plus a CDN range - drains, and `collect` MERGES every verified
-slot (`tools/clients/merge-slots.mjs`): a whole song from any clean egress proves a client works, a
-failure counts only when every clean egress agrees, so a false death needs every independent egress
-to be wrong at once. A slot whose post-drain check fails is only partially trusted: its whole songs
+slot (`tools/clients/merge-slots.mjs`): a whole song from any clean egress proves a client works; a
+failure counts only when the clean egresses AGREE (every slot, or at least two - a lone tunnel
+hiccup cannot veto a kill, a lone failing slot cannot declare one), so a false death needs
+independent egresses to be wrong together. A slot whose post-drain check fails is only partially trusted: its whole songs
 still count (they happened), its failures do not. Slots 5-6 run on ARM-hosted runners (a second
 Azure pool, other colos); identity-bump candidates are drained in slots 1-2 only. One gated colo no
 longer costs a run. `node tools/clients/report-runs.mjs [N]` prints the last N runs' verified slots,

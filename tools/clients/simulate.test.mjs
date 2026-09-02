@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { classify, classifySabr, planBenches, planUnbenches, planSabrBenches } from "./decide.mjs";
 import { benchEntryText, unbenchEntryText, verifyBench, verifyUnbench, benchSabrText, unbenchSabrText, verifySabrToggle } from "./apply-bench.mjs";
 import { bumpEntryText, verifyBump } from "./apply-bump.mjs";
+import { mergeScans } from "./merge-slots.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // The harness loader: the zemer-app checkout next to this repo (submodule layout) or HARNESS_DIR (CI).
@@ -272,4 +273,31 @@ test("FUTURE: a flapping client (dead, healthy, dead) never reaches the quorum -
   run(w, with_("partial")); run(w, with_("whole")); const r = run(w, with_("partial"));
   assert.deepEqual(r.applied, []); assert.match(r.refused[0], /first sighting/);
   const r4 = run(w, with_("partial")); assert.deepEqual(r4.applied, ["bench:TVHTML5_SIMPLY"]);
+});
+
+// =========================================================================== MULTI-SLOT ======
+const slotScan = (perClient) => ({ videos: ["v0", "v1"], clients: Object.entries(perClient).map(([key, kinds], i) => ({ key, main: i === 0, loginSupported: key === "WEB_REMIX" || key === "WEB_CREATOR", loginRequired: key === "WEB_CREATOR", sabr: ["WEB_REMIX", "VISIONOS", "TVHTML5_SIMPLY"].includes(key) ? "live" : null, results: kinds.map((k, j) => ({ video: `v${j}`, kind: k })), sabrResults: [] })) });
+const healthyAll = { WEB_REMIX: ["whole", "whole"], VISIONOS: ["whole", "whole"], VISIONOS_0_1: ["whole", "whole"], WEB_CREATOR: ["whole", "whole"], TVHTML5_SIMPLY: ["whole", "whole"] };
+
+test("MULTI-SLOT: a real kill seen by five slots is not vetoed by one slot's transport error - benched on the second run", () => {
+  const w = world(TABLE_TODAY);
+  const kill = { ...healthyAll, TVHTML5_SIMPLY: ["partial", "partial"] };
+  const slots = () => [...Array(5)].map(() => slotScan(kill)).concat([slotScan({ ...healthyAll, TVHTML5_SIMPLY: ["error", "partial"] })]);
+  const r1 = run(w, mergeScans(slots())); assert.deepEqual(r1.dead, ["TVHTML5_SIMPLY"]);
+  const r2 = run(w, mergeScans(slots())); assert.deepEqual(r2.applied, ["bench:TVHTML5_SIMPLY"]);
+});
+
+test("MULTI-SLOT: one slot's egress artifact (every anonymous client walled) is outvoted by clean slots - nothing dead, nothing benched", () => {
+  const w = world(TABLE_TODAY);
+  const walled = { ...healthyAll, VISIONOS: ["partial", "partial"], VISIONOS_0_1: ["partial", "partial"], TVHTML5_SIMPLY: ["partial", "partial"] };
+  const slots = () => [slotScan(walled), slotScan(healthyAll), slotScan(healthyAll)];
+  for (let i = 0; i < 3; i++) { const r = run(w, mergeScans(slots())); assert.deepEqual(r.dead, []); assert.deepEqual(r.applied, []); }
+  assert.equal(w.table, TABLE_TODAY);
+});
+
+test("MULTI-SLOT: a lone failing slot against silence (others errored) stays inconclusive - no false kill from one bad egress", () => {
+  const w = world(TABLE_TODAY);
+  const slots = () => [slotScan({ ...healthyAll, WEB_CREATOR: ["partial", "partial"] }), slotScan({ ...healthyAll, WEB_CREATOR: ["error", "error"] }), slotScan({ ...healthyAll, WEB_CREATOR: ["error", "error"] })];
+  run(w, mergeScans(slots())); const r = run(w, mergeScans(slots()));
+  assert.deepEqual(r.dead, []); assert.deepEqual(r.applied, []); assert.deepEqual(r.inconclusive, ["WEB_CREATOR"]);
 });
