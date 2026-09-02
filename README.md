@@ -104,8 +104,9 @@ pinned across the two readers by `src/test/resources/stream-clients-parity/`.
 ### Automated monitoring (`.github/workflows/client-monitor.yml`)
 
 There is no upstream artifact to "scan" for clients the way `player_ias` hashes are scanned, so the
-monitor measures the thing that matters directly: every 3 h it drains a whole song through EVERY
-known client on the validation videos, using the zemer-app harness (`tests/scan-stream-clients.mjs`
+monitor measures the thing that matters directly: after every completed run of the player monitor
+(`workflow_run`, rate-limited to one scan per `MIN_SCAN_INTERVAL_MINUTES`, default 60) and at
+least every 3 h, it drains a whole song through EVERY known client on the validation videos, using the zemer-app harness (`tests/scan-stream-clients.mjs`
 = the same `client-fulldownload.mjs` drain a human runs). The roster is dynamic — the table's live
 entries, its benched entries, and every client the app retired (`tests/clients-retired.mjs`) — and
 each outcome has one response:
