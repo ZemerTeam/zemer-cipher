@@ -146,14 +146,22 @@ jobs:
   # and upload; `collect` takes the first verified result. Costs no wall-clock time.
   scan:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions: {}
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        slot: [1, 2, 3, 4, 5, 6]
+        # Two runner pools for region diversity: x64 and ARM hosted runners live in different
+        # Azure pools, so their WARP colos differ - more independent egress draws per run.
+        include:
+          - { slot: 1, runner: ubuntu-latest }
+          - { slot: 2, runner: ubuntu-latest }
+          - { slot: 3, runner: ubuntu-latest }
+          - { slot: 4, runner: ubuntu-latest }
+          - { slot: 5, runner: ubuntu-24.04-arm }
+          - { slot: 6, runner: ubuntu-24.04-arm }
     steps:
       - name: Checkout zemer-cipher
         uses: actions/checkout@v4
@@ -363,7 +371,7 @@ jobs:
 
       - name: Record the egress this slot drained through
         run: |
-          echo "slot=${{ matrix.slot }} egress=warp ipv6=${FORCE_IPV6:-0} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
+          echo "slot=${{ matrix.slot }} runner=${{ matrix.runner }} egress=warp ipv6=${FORCE_IPV6:-0} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
           cat /tmp/egress.txt
 
       - name: Disconnect WARP egress
