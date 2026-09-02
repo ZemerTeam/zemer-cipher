@@ -133,7 +133,8 @@ never benched, at least `MIN_LIVE_FALLBACKS` (default 2) live fallbacks must rem
 (identity bump: only clientVersion / userAgent / osName / osVersion / deviceMake / deviceModel /
 androidSdkVersion of ONE entry, values re-validated with the parser's shapes) are the only writers;
 both re-parse the result with the harness loader and refuse anything else — a different key,
-protocol, flag, order or entry can never change unattended. Deploy is gated by the repository
+protocol, flag, order or entry can never change unattended. `CLIENT_MONITOR_ENABLED=false` (repository variable) is the emergency kill switch: every
+scan, alert and deploy stops on the next run. Deploy is gated by the repository
 variable `AUTO_DEPLOY_CLIENTS` (unset = alert only, `branch`, `master`) with the same
 read-back-and-revert step as the player pipeline; `CLIENT_HARNESS_REF` pins the zemer-app ref that
 supplies the harness. Secrets: `YT_COOKIE` / `YT_VISITOR_DATA` / `YT_DATASYNC_ID` (login-required

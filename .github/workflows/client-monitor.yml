@@ -95,7 +95,13 @@ jobs:
           EVENT: ${{ github.event_name }}
           THIS_RUN: ${{ github.run_id }}
           MIN_MINUTES: ${{ vars.MIN_SCAN_INTERVAL_MINUTES }}
+          MONITOR_ENABLED: ${{ vars.CLIENT_MONITOR_ENABLED }}
         run: |
+          # Emergency kill switch: the repository variable CLIENT_MONITOR_ENABLED=false stops every
+          # scan, alert and deploy on the next run without touching the workflow file.
+          if [ "${MONITOR_ENABLED:-true}" = "false" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "::warning::CLIENT_MONITOR_ENABLED=false - monitor disabled"; exit 0
+          fi
           if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "push" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"; echo "manual/push: scanning"; exit 0
           fi
@@ -264,8 +270,10 @@ jobs:
       # MAX_RUNNER_ATTEMPTS (default 4) times. A bot-gated verdict is never accepted by design.
       - name: Refuse to scan from a gated runner
         if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' && steps.egress.outputs.verified != 'true' }}
+        env:
+          SLOT: ${{ matrix.slot }}
         run: |
-          echo "::warning::slot ${{ matrix.slot }}: egress not verified on this runner - this slot drains nothing"
+          echo "::warning::slot $SLOT: egress not verified on this runner - this slot drains nothing"
           exit 1
 
       # Whole-song drains of every known client on every validation video, against THIS repo's table
