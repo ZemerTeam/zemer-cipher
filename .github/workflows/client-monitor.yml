@@ -601,9 +601,11 @@ jobs:
           done
           exit 1
 
+  # Runs on EVERY scan (not only eventful ones): a quiet run is exactly when the detection issues
+  # of the previous run get closed. Telegram fires only when something happened.
   notify:
     needs: [scan, alert, deploy]
-    if: always() && needs.scan.outputs.action_count != '0'
+    if: always() && needs.scan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -650,7 +652,7 @@ jobs:
             done
 
       - name: Send Telegram notification
-        if: always()
+        if: always() && needs.scan.outputs.action_count != '0'
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           PRIMARY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
