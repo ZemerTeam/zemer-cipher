@@ -50,9 +50,9 @@
       "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
       "protocol": "web_cipher_pot",
       "family": "WEB_CREATOR",
+      "mirrors": "web_creator",
       "loginSupported": true,
-      "loginRequired": true,
-      "mirrors": "web_creator"
+      "loginRequired": true
     },
     {
       "key": "TVHTML5_SIMPLY",
