@@ -167,6 +167,13 @@ object StreamClientParser {
             val obj = element as? JsonObject
             val keyLabel = ((obj?.get("key") as? JsonPrimitive)?.takeIf { it.isString }?.content)
                 ?: "clients[$index]"
+            // A duplicate key is a file-level reject whether or not the rows are usable: a benched
+            // twin of a live key would otherwise be accepted here but make the only writer
+            // (apply-bench) unable to act on that key, and un-benching the twin by hand would turn
+            // the file into a wholesale reject on every device.
+            if (obj != null && KEY_RE.matches(keyLabel) && !seenKeys.add(keyLabel)) {
+                return ParseResult.Failure("duplicate client key '$keyLabel'")
+            }
             val entry = parseEntry(obj)
             if (entry == null) {
                 // Entry 0 is the main client: a file whose main row is unusable is rejected
@@ -174,9 +181,6 @@ object StreamClientParser {
                 if (index == 0) return ParseResult.Failure("main client entry (clients[0]) is invalid or disabled")
                 skipped += keyLabel
                 continue
-            }
-            if (!seenKeys.add(entry.key)) {
-                return ParseResult.Failure("duplicate client key '${entry.key}'")
             }
             clients += entry
         }

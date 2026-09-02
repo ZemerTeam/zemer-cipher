@@ -123,6 +123,9 @@ class StreamClientParserTest {
     @Test
     fun `duplicate key rejects`() {
         assertTrue(failure(file(entry("WEB_REMIX"), entry("WEB_REMIX"))).contains("duplicate"))
+        // ...even when the twin is benched or carries an unknown protocol (rows the parser skips).
+        assertTrue(failure(file(entry("WEB_REMIX"), entry("VISIONOS"), entry("VISIONOS", extra = """, "enabled": false"""))).contains("duplicate"))
+        assertTrue(failure(file(entry("WEB_REMIX"), entry("VISIONOS", protocol = "sabr"), entry("VISIONOS"))).contains("duplicate"))
     }
 
     @Test

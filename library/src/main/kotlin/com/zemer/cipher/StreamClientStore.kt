@@ -142,10 +142,14 @@ object StreamClientStore {
      */
     internal fun applyCachedOverlay() {
         // Staleness cap: an over-age cache (or one whose meta/stamp is missing/corrupt — no way
-        // to prove freshness) is dead. withinWindow also treats a backward clock step as expired.
+        // to prove freshness) is dead. A stamp in the FUTURE (the clock stepped backwards: an
+        // epoch boot before NTP, a manual change) proves nothing about age, so it counts as fresh —
+        // treating it as expired would purge a valid last-good table on every such launch and
+        // re-stamp it with the bogus early time, purging it again once the clock is corrected.
+        val now = System.currentTimeMillis()
         val syncStamp = readMeta()?.second
         val cacheFresh = syncStamp != null &&
-            PlayerConfigStore.withinWindow(System.currentTimeMillis(), syncStamp, CACHE_MAX_AGE_MS)
+            (syncStamp > now || PlayerConfigStore.withinWindow(now, syncStamp, CACHE_MAX_AGE_MS))
         val cached = if (cacheFresh) {
             parseSource("cached remote copy") { cacheFile()?.takeIf { it.exists() }?.readText() }
         } else {

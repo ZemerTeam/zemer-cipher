@@ -3,6 +3,9 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { classify, planBenches, planUnbenches, issueTitle, ISSUE_TITLE_RE, revivedTitle, REVIVED_TITLE_RE } from "./decide.mjs";
 import { benchEntryText, verifyBench, unbenchEntryText, verifyUnbench } from "./apply-bench.mjs";
 import { bumpEntryText, verifyBump } from "./apply-bump.mjs";
@@ -88,6 +91,16 @@ test("planUnbenches: only a previously flagged revival is un-benched", () => {
   assert.deepEqual(p.refused.map((x) => x.key), ["A"]);
 });
 
+test("the workflow's inline issue-title literals match decide.mjs (one definition, four users)", () => {
+  // github-script steps cannot import decide.mjs, so the workflow re-types the titles; this pins
+  // every copy to the exported source so a rename here cannot silently defeat the quorum.
+  const yml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows", "client-monitor.yml"), "utf8");
+  for (const re of [ISSUE_TITLE_RE, REVIVED_TITLE_RE]) assert.ok(yml.includes(re.source), `workflow lacks ${re.source}`);
+  assert.ok(yml.includes(issueTitle("${key}")), "upsert title for failing drifted");
+  assert.ok(yml.includes(revivedTitle("${key}")), "upsert title for revived drifted");
+  assert.ok(yml.includes('"Stream client failing: "*)') && yml.includes('"Stream client revived: "*)'), "notify close cases drifted");
+});
+
 test("issue titles round-trip through the dedup regex", () => {
   assert.equal(revivedTitle("X").match(REVIVED_TITLE_RE)[1], "X");
   const m = issueTitle("TVHTML5_SIMPLY").match(ISSUE_TITLE_RE);
@@ -154,6 +167,22 @@ test("benchEntryText is a no-op on an entry that already carries an enabled flag
   const twice = benchEntryText(once, "VISIONOS_0_1");
   assert.equal(twice.changed, false);
   assert.equal(twice.text, once);
+});
+
+test("unbench handles a hand-written kill switch: no space, no trailing comma (last field), after a sabr block", () => {
+  const lastField = TABLE.replace('      "family": "VISIONOS"\n    },\n    {\n      "key": "TVHTML5', '      "family": "VISIONOS",\n      "enabled":false\n    },\n    {\n      "key": "TVHTML5');
+  assert.deepEqual(stubParse(lastField).skipped, ["VISIONOS_0_1"]);
+  const back = unbenchEntryText(lastField, "VISIONOS_0_1");
+  assert.equal(back.changed, true);
+  assert.equal(back.text, TABLE);
+  verifyUnbench(lastField, back.text, "VISIONOS_0_1", stubParse);
+
+  const withSabr = TABLE.replace('      "key": "VISIONOS",\n', '      "key": "VISIONOS",\n      "sabr": {\n        "osName": "visionOS"\n      },\n      "enabled": false,\n');
+  assert.deepEqual(stubParse(withSabr).skipped, ["VISIONOS"]);
+  assert.equal(benchEntryText(withSabr, "VISIONOS").changed, false, "already benched behind a sabr block");
+  const again = unbenchEntryText(withSabr, "VISIONOS");
+  assert.equal(again.changed, true);
+  assert.deepEqual(stubParse(again.text).skipped, []);
 });
 
 test("benchEntryText refuses an unknown or ambiguous key", () => {

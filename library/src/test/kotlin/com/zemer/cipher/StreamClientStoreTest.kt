@@ -153,6 +153,16 @@ class StreamClientStoreTest {
     }
 
     @Test
+    fun `a future-dated stamp (clock stepped backwards) keeps the cache - it proves nothing about age`() {
+        cacheBody().writeText(remoteJson)
+        cacheMeta().writeText("\"etag\"\n${System.currentTimeMillis() + 3L * 24 * 60 * 60 * 1000}")
+        StreamClientStore.applyCachedOverlay()
+        assertEquals(listOf("REMOTE"), StreamClientStore.config()?.clients?.map { it.key })
+        assertTrue(cacheBody().exists())
+        assertTrue(cacheMeta().exists())
+    }
+
+    @Test
     fun `the sync stamp is seeded only from a meta that survived the overlay`() {
         // A stale cache is dropped WITH its meta, so the seed (which runs after the overlay in
         // initialize) must report "never synced" rather than a stamp describing a table that is
