@@ -51,7 +51,8 @@
       "protocol": "web_cipher_pot",
       "family": "WEB_CREATOR",
       "loginSupported": true,
-      "loginRequired": true
+      "loginRequired": true,
+      "mirrors": "web_creator"
     },
     {
       "key": "TVHTML5_SIMPLY",
