@@ -255,8 +255,15 @@ jobs:
             if [ $((attempt % 2)) -eq 0 ]; then warp-cli --accept-tos tunnel protocol set MASQUE >/dev/null 2>&1 || true; else warp-cli --accept-tos tunnel protocol set WireGuard >/dev/null 2>&1 || true; fi
             warp-cli --accept-tos connect >/dev/null
             for i in $(seq 1 20); do warp-cli --accept-tos status | grep -q Connected && break; sleep 2; done
-            TRACE=$(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo|ip)=' | tr '\n' ' ')
-            case "$TRACE" in *"ip=2"*|*"ip=3"*) ;; *) echo "::warning::no IPv6 egress on this attempt ($TRACE)"; continue ;; esac
+            # The v6 route can lag the "Connected" state by a few seconds (a slot lost both attempts
+            # to an empty trace, 2026-09-02): poll the trace before spending the attempt.
+            TRACE=""
+            for i in 1 2 3 4; do
+              TRACE=$(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo|ip)=' | tr '\n' ' ')
+              case "$TRACE" in *"ip=2"*|*"ip=3"*) break ;; esac
+              sleep 5
+            done
+            case "$TRACE" in *"ip=2"*|*"ip=3"*) ;; *) echo "::warning::no IPv6 egress on this attempt ($TRACE; $(warp-cli --accept-tos status 2>&1 | tr '\n' ' ' | cut -c1-160))"; continue ;; esac
             # IPv6 egress on purpose: WARP's shared IPv4 pool answered UNPLAYABLE where the same
             # colo's v6 passed (probe 2026-09-02, SJC), so v4 is never tried here.
             # Clean AND stable: youtube.com reachable, then two app-exact anonymous /player probes
