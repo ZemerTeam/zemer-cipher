@@ -46,6 +46,15 @@ for (const d of sabr.sabrDead) lines.push(`- ${d.key}: SABR DEAD — ${d.reasons
 for (const r of sabr.sabrRevived) lines.push(`- ${r.key}: SABR works again on a benched capability — ${sabrUnplan.unbench.includes(r.key) ? "UN-BENCHING" : "un-bench on the next run if still whole"}`);
 if (sabr.sabrDead.length === 0 && sabr.sabrRevived.length === 0 && !sabr.conclusive && (scan.clients || []).some((c) => c.sabr === "live" && (c.role || "live") === "live")) lines.push("- SABR pass INCONCLUSIVE (no entry drained a whole song over SABR — runner/cookie/cipher suspect)");
 if (!verdict.conclusive) lines.push("- scan INCONCLUSIVE (no client drained a whole song — runner/cookie/cipher suspect)");
+// A validation VIDEO that every live client rejects the same way (removed, region-blocked,
+// age-gated) is the video's problem: say so, so nobody reads the row as client trouble.
+const liveClients = (scan.clients || []).filter((c) => (c.role || "live") === "live");
+for (const video of scan.videos || []) {
+  const rs = liveClients.map((c) => (c.results || []).find((r) => r.video === video)).filter(Boolean);
+  if (rs.length >= 2 && rs.every((r) => r.kind === "not-ok") && new Set(rs.map((r) => r.reason)).size === 1) {
+    lines.push(`- VALIDATION VIDEO ${video} is unplayable for every client (${rs[0].reason}) — replace it in VALIDATION_VIDEO_IDS; the clients are not at fault`);
+  }
+}
 const authFailed = (scan.clients || []).filter((c) => (c.role || "live") === "live" && [...(c.results || []), ...(c.sabrResults || [])].some((r) => r.kind === "auth-failed")).map((c) => c.key);
 if (authFailed.length) lines.push(`- COOKIE SUSPECT: ${authFailed.join(", ")} answered a sign-in demand although the cookie was sent — the session expired or was revoked; refresh YT_COOKIE (nothing benched: auth-failed is inconclusive)`);
 if (verdict.egressSuspect) lines.push("- ANONYMOUS EGRESS SUSPECT: every login-less client failed while every cookie client drained whole — the runner's egress, not the clients; nothing benched");
