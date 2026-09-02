@@ -2,12 +2,15 @@ name: Stream Client Monitor
 
 # The stream-client analog of player-monitor.yml. Devices fetch
 # library/src/main/assets/stream_clients.json from this repo at runtime (6 h TTL, or at once after a
-# total resolution failure), so a commit here IS the deploy. Every few hours this drains EVERY known
-# client on the validation videos through the zemer-app harness — the table's live entries, its
-# benched entries, and every client the app retired — and acts on what it proves:
+# total resolution failure), so a commit here IS the deploy. Every 30 minutes this drains EVERY
+# known client on the validation videos through the zemer-app harness — the table's live entries,
+# its benched entries, and every client the app retired — progressively AND over SABR, and acts on
+# what it proves:
 #
 #   live entry fails on every video, two runs in a row   -> BENCH it (`enabled: false`), auto-deploy
 #   benched entry drains whole songs, two runs in a row  -> UN-BENCH it, auto-deploy
+#   entry streams progressively but fails over SABR      -> bench its SABR capability
+#   (two runs in a row; the reverse un-benches it)          (`sabr.enabled: false`), auto-deploy
 #   retired client drains a whole song                   -> issue "works again" (a human re-adds)
 #   identity behind yt-dlp master (version/UA/os/device) -> BUMP it: the entry is copied into a
 #                                                           candidate table with yt-dlp's values, the
@@ -37,6 +40,15 @@ name: Stream Client Monitor
 # SCAN_EGRESS variable = `warp` (default) | `proxy` (the SCAN_PROXY secret: a residential/mobile
 # http(s):// or socks5:// egress, routed by the harness itself) | `none` (bare runner — anonymous
 # clients come back `bot-gated`, INCONCLUSIVE: never a kill, never a bench).
+#
+# EGRESS SLOTS: the scan runs on eight runners at once (four x64, four ARM), each connecting WARP
+# with IPv6 pinned and PROVING its egress (an app-exact anonymous /player plus a CDN range) before
+# and after the drains; a colo that never passes (GATED_COLOS) gets one attempt, others three. The
+# verified slots are merged (tools/clients/merge-slots.mjs): a whole song from any clean slot proves
+# a client works, a definitive failure needs TWO clean slots agreeing, a slot whose egress flipped
+# mid-run contributes only its whole songs, a run with a single verified slot can never kill, and a
+# run with none re-dispatches itself on fresh runners (MAX_RUNNER_ATTEMPTS). Measured 2026-09-02:
+# 27 consecutive runs, every live client whole on both transports, 2-8 verified slots each.
 
 "on":
   # Chained to the player monitor: every completed run of it (every ~20 min from master) triggers
