@@ -260,9 +260,10 @@ jobs:
         run: |
           curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
-          # Bounded apt: wait at most 60 s for the dpkg lock per try, three tries.
+          # Bounded apt: at most 100 s per command and 60 s for the dpkg lock, three tries (a slot
+          # still hit the 8-minute step cap inside apt on 2026-09-02; the cap bounded it).
           for try in 1 2 3; do
-            sudo apt-get -o DPkg::Lock::Timeout=60 update -qq && sudo apt-get -o DPkg::Lock::Timeout=60 install -y -qq cloudflare-warp >/dev/null && break
+            sudo timeout 100 apt-get -o DPkg::Lock::Timeout=60 update -qq && sudo timeout 100 apt-get -o DPkg::Lock::Timeout=60 install -y -qq cloudflare-warp >/dev/null && break
             echo "::warning::apt try $try failed (lock held or repo slow) - retrying"; sleep 15
           done
           command -v warp-cli >/dev/null || { echo "::warning::cloudflare-warp did not install - slot refused"; echo "verified=false" >> "$GITHUB_OUTPUT"; exit 0; }
