@@ -3,6 +3,9 @@ name: Probe bot gate
 # ANONYMOUS clients from a GitHub-hosted runner (the app on a phone never sees it). Manual dispatch.
 "on":
   workflow_dispatch:
+  push:
+    branches: ['feat/remote-stream-clients']
+    paths: ['.github/workflows/probe-bot-gate.yml']
 concurrency:
   group: probe-bot-gate
 permissions: {}
