@@ -455,7 +455,18 @@ jobs:
             exit 1
           fi
           node tools/clients/merge-slots.mjs $FILES > /tmp/scan.json
-          cp "$FIRST"/drift.json "$FIRST"/bumps.json /tmp/ 2>/dev/null || true
+          cp "$FIRST"/drift.json /tmp/ 2>/dev/null || true
+          # Verified bumps come from whichever slot verified them (slots 1-2 propose; either may be
+          # the one whose egress held): union by key, so a bump verified in slot 2 is never lost
+          # behind slot 1's empty list.
+          node -e '
+            const fs = require("fs"); const seen = new Map();
+            for (const d of fs.readdirSync("/tmp/slots").map((n) => "/tmp/slots/" + n).sort()) {
+              try { for (const b of JSON.parse(fs.readFileSync(d + "/bumps.json", "utf8"))) if (!seen.has(b.key)) seen.set(b.key, b); } catch {}
+            }
+            fs.writeFileSync("/tmp/bumps.json", JSON.stringify([...seen.values()], null, 2));
+            console.log("verified bumps across slots:", [...seen.keys()].join(" ") || "none");
+          '
           : > /tmp/scan.log; : > /tmp/egress.txt
           for d in $(ls -d /tmp/slots/client-scan-slot-* 2>/dev/null | sort); do
             [ -s "$d/scan.json" ] || continue
