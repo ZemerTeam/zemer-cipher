@@ -128,18 +128,21 @@ jobs:
       - name: Run client tools unit tests
         run: node --test tools/clients/clients.test.mjs
 
+  # EGRESS SLOTS: the same scan on several runners AT ONCE. WARP's colo follows the runner's
+  # region and does not change when WARP re-registers (an IAD runner re-rolled six IAD addresses,
+  # all gated), so one runner is a coin flip - three independent runners almost never all land on
+  # a gated colo. Each slot proves its own egress before a single drain; only verified slots drain
+  # and upload; `collect` takes the first verified result. Costs no wall-clock time.
   scan:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions: {}
-    outputs:
-      egress_verified: ${{ steps.egress.outputs.verified }}
-      action_count: ${{ steps.preplan.outputs.action_count }}
-      summary: ${{ steps.preplan.outputs.summary }}
-      conclusive: ${{ steps.preplan.outputs.conclusive }}
-      healthy: ${{ steps.preplan.outputs.healthy }}
-      sabr_healthy: ${{ steps.preplan.outputs.sabr_healthy }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3]
     steps:
       - name: Checkout zemer-cipher
         uses: actions/checkout@v4
@@ -193,7 +196,10 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
           sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp >/dev/null
           ok=""
-          for attempt in $(seq 1 "${EGRESS_ATTEMPTS:-6}"); do
+          # Re-registering rarely changes the colo (an IAD runner re-rolled six IAD addresses in a
+          # row, all gated), so only two attempts per runner; the cross-runner re-dispatch below is
+          # the lever that actually moves colo.
+          for attempt in $(seq 1 "${EGRESS_ATTEMPTS:-2}"); do
             warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
             warp-cli --accept-tos registration delete >/dev/null 2>&1 || true
             warp-cli --accept-tos registration new >/dev/null
@@ -214,7 +220,7 @@ jobs:
             echo "::warning::egress attempt $attempt not clean/stable ($TRACE) - re-rolling"
           done
           if [ -z "$ok" ]; then
-            echo "::warning::no WARP egress passed the bot gate after ${EGRESS_ATTEMPTS:-6} attempts on this runner"
+            echo "::warning::no WARP egress passed the bot gate after ${EGRESS_ATTEMPTS:-2} attempts on this runner"
             echo "verified=false" >> "$GITHUB_OUTPUT"
           else
             echo "verified=true" >> "$GITHUB_OUTPUT"
@@ -227,7 +233,7 @@ jobs:
       - name: Refuse to scan from a gated runner
         if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' && steps.egress.outputs.verified != 'true' }}
         run: |
-          echo "::error::egress not verified on this runner (attempt ${{ github.event.inputs.attempt || '1' }}) - refusing to scan; re-dispatching on a fresh runner"
+          echo "::warning::slot ${{ matrix.slot }}: egress not verified on this runner - this slot drains nothing"
           exit 1
 
       # Whole-song drains of every known client on every validation video, against THIS repo's table
@@ -317,6 +323,67 @@ jobs:
         continue-on-error: true
         run: warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
 
+      - name: Record the egress this slot drained through
+        run: |
+          echo "slot=${{ matrix.slot }} egress=warp $(curl -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
+          cat /tmp/egress.txt
+
+      - name: Upload this slot's results
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-scan-slot-${{ matrix.slot }}
+          path: |
+            /tmp/scan.json
+            /tmp/drift.json
+            /tmp/bumps.json
+            /tmp/scan.log
+            /tmp/egress.txt
+          retention-days: 14
+
+  # Take the first slot whose egress verified (its artifact exists), publish it as `client-scan`
+  # for the alert/deploy/notify jobs, and run the pre-plan on it.
+  collect:
+    needs: [gate, scan]
+    if: always() && needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      egress_verified: ${{ steps.pick.outputs.verified }}
+      slot: ${{ steps.pick.outputs.slot }}
+      action_count: ${{ steps.preplan.outputs.action_count }}
+      summary: ${{ steps.preplan.outputs.summary }}
+      conclusive: ${{ steps.preplan.outputs.conclusive }}
+      healthy: ${{ steps.preplan.outputs.healthy }}
+      sabr_healthy: ${{ steps.preplan.outputs.sabr_healthy }}
+    steps:
+      - name: Checkout zemer-cipher
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: client-scan-slot-*
+          path: /tmp/slots
+      - name: Pick the first verified slot
+        id: pick
+        run: |
+          ls -d /tmp/slots/client-scan-slot-* 2>/dev/null || true
+          for d in /tmp/slots/client-scan-slot-1 /tmp/slots/client-scan-slot-2 /tmp/slots/client-scan-slot-3; do
+            if [ -s "$d/scan.json" ]; then
+              cp "$d"/scan.json "$d"/drift.json "$d"/bumps.json "$d"/scan.log "$d"/egress.txt /tmp/ 2>/dev/null || true
+              echo "using $(cat "$d/egress.txt")"
+              echo "verified=true" >> "$GITHUB_OUTPUT"; echo "slot=$(basename "$d")" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::no slot verified its egress - nothing scanned this run"
+          echo "verified=false" >> "$GITHUB_OUTPUT"
+          exit 1
+
       # A first pass with no issue history: decides whether ANYTHING needs the alert job at all
       # (dead / revived / resurrected / drift / bumps / inconclusive). The bench quorum needs the
       # open-issue history, which only the alert job (issues:read) can see, so the real plan runs there.
@@ -324,7 +391,7 @@ jobs:
         id: preplan
         run: node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json --bumps /tmp/bumps.json
 
-      - name: Upload scan results
+      - name: Publish the chosen scan
         uses: actions/upload-artifact@v4
         with:
           name: client-scan
@@ -333,15 +400,16 @@ jobs:
             /tmp/drift.json
             /tmp/bumps.json
             /tmp/scan.log
+            /tmp/egress.txt
           retention-days: 14
 
   # Runner roulette: when the scan job refused to run on a gated egress, dispatch the workflow
   # again with attempt+1 - a fresh runner, a different colo. Bounded by MAX_RUNNER_ATTEMPTS.
   redispatch:
-    needs: [gate, scan]
+    needs: [gate, collect]
     if: >-
-      always() && needs.gate.outputs.run == 'true' && needs.scan.result == 'failure' &&
-      needs.scan.outputs.egress_verified != 'true' &&
+      always() && needs.gate.outputs.run == 'true' &&
+      needs.collect.outputs.egress_verified != 'true' &&
       (vars.SCAN_EGRESS || 'warp') == 'warp'
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -358,7 +426,7 @@ jobs:
         run: |
           NEXT=$((ATTEMPT + 1))
           if [ "$NEXT" -gt "${MAX:-4}" ]; then
-            echo "::error::egress unverified on ${ATTEMPT} runners - giving up this cycle (next schedule retries)"
+            echo "::error::no verified egress across ${ATTEMPT} runner sets - giving up this cycle (next schedule retries)"
             exit 1
           fi
           echo "re-dispatching client-monitor on $REF as attempt $NEXT"
@@ -367,8 +435,8 @@ jobs:
   # Issues are the pipeline's MEMORY: a "failing" issue open from a previous run is what promotes a
   # dead client to a bench (and a "revived" issue to an un-bench) — one bad scan can never write.
   alert:
-    needs: scan
-    if: needs.scan.outputs.action_count != '0'
+    needs: collect
+    if: needs.collect.result == 'success' && needs.collect.outputs.action_count != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -510,7 +578,7 @@ jobs:
             Issues: https://github.com/${{ github.repository }}/issues
 
   deploy:
-    needs: [scan, alert]
+    needs: [collect, alert]
     if: >-
       (needs.alert.outputs.bench != '' || needs.alert.outputs.unbench != '' || needs.alert.outputs.bump_keys != '' ||
        needs.alert.outputs.sabr_bench != '' || needs.alert.outputs.sabr_unbench != '') &&
@@ -778,8 +846,8 @@ jobs:
   # Runs on EVERY scan (not only eventful ones): a quiet run is exactly when the detection issues
   # of the previous run get closed. Telegram fires only when something happened.
   notify:
-    needs: [gate, scan, alert, deploy]
-    if: always() && needs.scan.result == 'success'
+    needs: [gate, collect, alert, deploy]
+    if: always() && needs.collect.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -801,8 +869,8 @@ jobs:
           TARGET: ${{ needs.deploy.outputs.target || (vars.AUTO_DEPLOY_CLIENTS == 'branch' && github.ref_name) || 'master' }}
           # From the alert plan when it ran, else from the scan's own pre-plan (a quiet run is
           # exactly when a "failing" client has come back healthy).
-          HEALTHY: ${{ needs.alert.outputs.healthy || needs.scan.outputs.healthy }}
-          SABR_HEALTHY: ${{ needs.alert.outputs.sabr_healthy || needs.scan.outputs.sabr_healthy }}
+          HEALTHY: ${{ needs.alert.outputs.healthy || needs.collect.outputs.healthy }}
+          SABR_HEALTHY: ${{ needs.alert.outputs.sabr_healthy || needs.collect.outputs.sabr_healthy }}
           APPLIED: ${{ needs.deploy.outputs.applied }}
           # Keys STILL drifting after this run (empty when nothing drifts): a drift issue whose key
           # is no longer in it was resolved — by this run's bump or an earlier one.
@@ -843,13 +911,13 @@ jobs:
             done
 
       - name: Send Telegram notification
-        if: always() && needs.scan.outputs.action_count != '0'
+        if: always() && needs.collect.outputs.action_count != '0'
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           PRIMARY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           EXTRA_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
           THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID }}
-          SUMMARY: ${{ needs.alert.outputs.summary || needs.scan.outputs.summary }}
+          SUMMARY: ${{ needs.alert.outputs.summary || needs.collect.outputs.summary }}
           BENCH: ${{ needs.alert.outputs.bench }}
           UNBENCH: ${{ needs.alert.outputs.unbench }}
           BUMPS: ${{ needs.alert.outputs.bump_keys }}
