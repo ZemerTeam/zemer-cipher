@@ -87,6 +87,15 @@ jobs:
     outputs:
       run: ${{ steps.decide.outputs.run }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/clients
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # tools/clients/gate.mjs (tested): kill switch > manual/push always > chained/scheduled only
+      # when the last successful scan is older than MIN_SCAN_INTERVAL_MINUTES.
       - name: Decide whether to scan
         id: decide
         env:
@@ -97,25 +106,11 @@ jobs:
           MIN_MINUTES: ${{ vars.MIN_SCAN_INTERVAL_MINUTES }}
           MONITOR_ENABLED: ${{ vars.CLIENT_MONITOR_ENABLED }}
         run: |
-          # Emergency kill switch: the repository variable CLIENT_MONITOR_ENABLED=false stops every
-          # scan, alert and deploy on the next run without touching the workflow file.
-          if [ "${MONITOR_ENABLED:-true}" = "false" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"; echo "::warning::CLIENT_MONITOR_ENABLED=false - monitor disabled"; exit 0
-          fi
-          if [ "$EVENT" = "workflow_dispatch" ] || [ "$EVENT" = "push" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; echo "manual/push: scanning"; exit 0
-          fi
-          # Default cadence 30 min (chained to the player monitor): with the two-sighting quorum at
-          # MIN_FLAG_AGE_MINUTES (default 30) a kill is benched within about an hour.
-          MIN="${MIN_MINUTES:-30}"
-          LAST=$(gh api "repos/$REPO/actions/workflows/client-monitor.yml/runs?status=success&per_page=10"             --jq "[.workflow_runs[] | select(.id != ($THIS_RUN|tonumber)) | .updated_at] | first // empty" 2>/dev/null || true)
-          if [ -z "$LAST" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; echo "no previous successful scan: scanning"; exit 0; fi
-          AGE=$(( ( $(date -u +%s) - $(date -u -d "$LAST" +%s) ) / 60 ))
-          if [ "$AGE" -ge "$MIN" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"; echo "last successful scan ${AGE} min ago (>= ${MIN}): scanning"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"; echo "last successful scan ${AGE} min ago (< ${MIN}): skipping this chained run"
-          fi
+          LAST=$(gh api "repos/$REPO/actions/workflows/client-monitor.yml/runs?status=success&per_page=10" \
+            --jq "[.workflow_runs[] | select(.id != ($THIS_RUN|tonumber)) | .updated_at] | first // empty" 2>/dev/null || true)
+          OUT=$(node tools/clients/gate.mjs "$EVENT" "${MONITOR_ENABLED:-}" "$LAST" "${MIN_MINUTES:-30}")
+          echo "$OUT"
+          echo "run=${OUT%% *}" >> "$GITHUB_OUTPUT"
 
   # The pure decision + write rules (dead/revived classification, bench quorum, minimum live
   # fallbacks, the one-line edit invariants) stand between a scan and every device's chain — run
@@ -145,7 +140,7 @@ jobs:
       - name: Run client tools unit tests
         env:
           HARNESS_DIR: ${{ github.workspace }}/harness-tests
-        run: node --test tools/clients/clients.test.mjs tools/clients/merge-slots.test.mjs tools/clients/simulate.test.mjs
+        run: node --test tools/clients/clients.test.mjs tools/clients/merge-slots.test.mjs tools/clients/simulate.test.mjs tools/clients/gate.test.mjs
 
   # EGRESS SLOTS: the same scan on several runners AT ONCE. WARP's colo follows the runner's
   # region and does not change when WARP re-registers (an IAD runner re-rolled six IAD addresses,
