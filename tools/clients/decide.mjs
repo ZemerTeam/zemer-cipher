@@ -94,5 +94,5 @@ export const ISSUE_TITLE_RE = /^Stream client failing: ([A-Z0-9_]{1,32})$/;
 export const revivedTitle = (key) => `Stream client revived: ${key}`;
 export const REVIVED_TITLE_RE = /^Stream client revived: ([A-Z0-9_]{1,32})$/;
 export const resurrectedTitle = (key) => `Retired client works again: ${key}`;
-export const driftTitle = (key) => `Stream client version drift: ${key}`;
+export const driftTitle = (key) => `Stream client identity drift: ${key}`;
 export const INCONCLUSIVE_TITLE = "Stream client scan inconclusive";

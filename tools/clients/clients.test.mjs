@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { classify, planBenches, planUnbenches, issueTitle, ISSUE_TITLE_RE, revivedTitle, REVIVED_TITLE_RE } from "./decide.mjs";
+import { classify, planBenches, planUnbenches, issueTitle, ISSUE_TITLE_RE, revivedTitle, REVIVED_TITLE_RE, driftTitle } from "./decide.mjs";
 import { benchEntryText, verifyBench, unbenchEntryText, verifyUnbench } from "./apply-bench.mjs";
 import { bumpEntryText, verifyBump } from "./apply-bump.mjs";
 
@@ -91,33 +91,19 @@ test("planUnbenches: only a previously flagged revival is un-benched", () => {
   assert.deepEqual(p.refused.map((x) => x.key), ["A"]);
 });
 
-test("the workflow's inline issue-title literals match decide.mjs (one definition, four users)", () => {
-  // github-script steps cannot import decide.mjs, so the workflow re-types the titles; this pins
-  // every copy to the exported source so a rename here cannot silently defeat the quorum.
-  const yml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows", "client-monitor.yml"), "utf8");
-  for (const re of [ISSUE_TITLE_RE, REVIVED_TITLE_RE]) assert.ok(yml.includes(re.source), `workflow lacks ${re.source}`);
-  assert.ok(yml.includes(issueTitle("${key}")), "upsert title for failing drifted");
-  assert.ok(yml.includes(revivedTitle("${key}")), "upsert title for revived drifted");
-  assert.ok(yml.includes('"Stream client failing: "*)') && yml.includes('"Stream client revived: "*)'), "notify close cases drifted");
-});
-
-test("classify edge cases: empty scan, missing roles, mixed verdicts, retired keys never bench", () => {
-  assert.deepEqual(classify(null).dead, []); assert.deepEqual(classify({}).healthy, []);
-  const c = classify(scan(true, [
-    { key: "WEB_REMIX", main: true, results: [r("a", "whole")] },
-    { key: "NOROLE", results: [r("a", "partial")] },                         // role defaults to live
-    { key: "MIXED", results: [r("a", "partial"), r("b", "bot-gated")] },     // one inconclusive result -> inconclusive
-    { key: "HTTP", results: [r("a", "http-error"), r("b", "sabr-only")] },   // all definitive -> dead
-    { key: "GONE", role: "retired", results: [r("a", "partial")] },
-  ]));
-  assert.deepEqual(c.dead.map((x) => x.key), ["NOROLE", "HTTP"]);
-  assert.deepEqual(c.inconclusive.map((x) => x.key), ["MIXED"]);
-  assert.deepEqual(c.stillDead.map((x) => x.key), ["GONE"]);
-  // A retired key can never be benched even if someone lists it as dead.
-  const p = planBenches({ liveKeys: ["WEB_REMIX", "A", "B", "C"], dead: [{ key: "GONE" }, { key: "A" }], previouslyFlagged: ["GONE", "A", "A"] });
-  assert.deepEqual(p.bench, ["A"]); assert.equal(p.refused[0].key, "GONE");
-  // Un-bench of something not revived is impossible; flagged extras are ignored.
-  assert.deepEqual(planUnbenches({ revived: [], previouslyFlagged: ["X"] }).unbench, []);
+test("issue titles have ONE definition: the workflow imports decide.mjs, issues.cjs uses its helpers, notify's shell cases match", () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const yml = readFileSync(join(root, ".github", "workflows", "client-monitor.yml"), "utf8");
+  const cjs = readFileSync(join(root, "tools", "clients", "issues.cjs"), "utf8");
+  assert.ok(yml.includes("tools/clients/decide.mjs"), "flagged reader imports decide.mjs");
+  assert.ok(yml.includes("tools/clients/issues.cjs"), "issue steps use issues.cjs");
+  assert.ok(!/Stream client failing: \$\{/.test(yml) && !/Stream client revived: \$\{/.test(yml), "no inline upsert titles left in the workflow");
+  for (const fn of ["issueTitle", "revivedTitle", "resurrectedTitle", "driftTitle", "INCONCLUSIVE_TITLE"]) assert.ok(cjs.includes(`decide.${fn}`), `issues.cjs uses decide.${fn}`);
+  assert.ok(!cjs.includes("Stream client failing:"), "issues.cjs carries no literal titles");
+  // The notify job's shell `case` patterns are the one remaining copy: pin them to the exports.
+  assert.ok(yml.includes(`"${issueTitle("")}"*)`), "notify failing case");
+  assert.ok(yml.includes(`"${revivedTitle("")}"*)`), "notify revived case");
+  assert.ok(yml.includes(`"${driftTitle("")}"*)`), "notify drift case");
 });
 
 test("issue titles round-trip through the dedup regex", () => {

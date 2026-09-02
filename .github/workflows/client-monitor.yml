@@ -315,14 +315,16 @@ jobs:
         with:
           github-token: ${{ steps.bot.outputs.token }}
           script: |
+            const { pathToFileURL } = require('url');
+            const { ISSUE_TITLE_RE, REVIVED_TITLE_RE } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/tools/clients/decide.mjs`).href);
             const minAgeMs = Number(process.env.MIN_FLAG_AGE_MINUTES || 60) * 60 * 1000;
             const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
             });
             const aged = open.filter((i) => Date.now() - new Date(i.created_at).getTime() >= minAgeMs);
             const pick = (re, list) => list.map((i) => (i.title.match(re) || [])[1]).filter(Boolean);
-            const failing = pick(/^Stream client failing: ([A-Z0-9_]{1,32})$/, aged);
-            const revived = pick(/^Stream client revived: ([A-Z0-9_]{1,32})$/, aged);
+            const failing = pick(ISSUE_TITLE_RE, aged);
+            const revived = pick(REVIVED_TITLE_RE, aged);
             core.setOutput('failing', failing.join(' '));
             core.setOutput('revived', revived.join(' '));
             core.setOutput('open_titles', JSON.stringify(open.map((i) => [i.number, i.title])));
@@ -338,78 +340,38 @@ jobs:
           node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json --bumps /tmp/bumps.json \
             --flagged "$FLAGGED" --flagged-revived "$FLAGGED_REVIVED" | tee /tmp/plan.json
 
-      # New issues are opened as the Zemer-Dude App (bot avatar); COMMENTS go through the built-in
-      # GITHUB_TOKEN (issues:write on this job) — the App token is not granted comment/close
-      # ('Resource not accessible by integration'), which failed the whole alert job (and with it
-      # the deploy) the first time a second sighting tried to update its issue.
-      - name: Open or update detection issues
+      # Issue bookkeeping lives in tools/clients/issues.cjs (titles from decide.mjs). Two steps,
+      # two tokens: NEW issues are opened as the Zemer-Dude App (bot avatar); COMMENTS on existing
+      # ones use the built-in GITHUB_TOKEN — the App token is not granted comment/close ('Resource
+      # not accessible by integration'), which once failed the benching run's alert job. Neither
+      # step may block the deploy: the plan is already made, the issues are bookkeeping.
+      - name: Open new detection issues (as the bot)
+        continue-on-error: true
         uses: actions/github-script@v7
         env:
+          MODE: create
           OPEN_TITLES: ${{ steps.flagged.outputs.open_titles }}
           DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/tools/clients/issues.cjs`);
+            await sync({ github, context, core, mode: process.env.MODE });
+
+      - name: Update existing detection issues
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          MODE: comment
+          OPEN_TITLES: ${{ steps.flagged.outputs.open_titles }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           github-token: ${{ github.token }}
           script: |
-            const fs = require('fs');
-            const { getOctokit } = require('@actions/github');
-            const bot = getOctokit(process.env.BOT_TOKEN);
-            const plan = JSON.parse(fs.readFileSync('/tmp/plan.json', 'utf8'));
-            const scan = JSON.parse(fs.readFileSync('/tmp/scan.json', 'utf8'));
-            const drift = JSON.parse(fs.readFileSync('/tmp/drift.json', 'utf8'));
-            const open = new Map(JSON.parse(process.env.OPEN_TITLES || '[]').map(([n, t]) => [t, n]));
-            const mode = process.env.DEPLOY_MODE || '(disabled)';
-            const run = process.env.RUN_URL;
-            const reasons = (key) => (scan.clients.find((c) => c.key === key)?.results || [])
-              .map((r) => `- \`${r.video}\`: ${r.kind}${r.reason ? ' — ' + r.reason : ''}`).join('\n');
-            const upsert = async (title, body, comment) => {
-              if (open.has(title)) {
-                await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: open.get(title), body: comment });
-                console.log(`updated #${open.get(title)}: ${title}`);
-              } else {
-                // No labels: the App token may not create labels, and titles are the dedup key.
-                const { data } = await bot.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
-                console.log(`opened #${data.number}: ${title}`);
-              }
-            };
-            for (const key of plan.dead) {
-              const benched = plan.bench.includes(key);
-              const refusal = (plan.refused.find((r) => r.key === key) || {}).reason || 'see plan';
-              await upsert(`Stream client failing: ${key}`,
-                [`## Stream client \`${key}\` fails every validation video`, '', reasons(key), '',
-                 `Benched automatically on the NEXT run if it is still failing (deploy mode: \`${mode}\`). Devices pick a bench up within 6 h, or at once after a total resolution failure.`, '', `Run: ${run}`].join('\n'),
-                benched ? `Still failing — **benching now** (deploy mode \`${mode}\`).\n\n${reasons(key)}\n\nRun: ${run}`
-                        : `Still failing on this run (not benched: ${refusal}).\n\n${reasons(key)}\n\nRun: ${run}`);
-            }
-            for (const key of plan.revived) {
-              await upsert(`Stream client revived: ${key}`,
-                [`## Benched entry \`${key}\` drains whole songs again`, '', reasons(key), '', `Un-benched automatically on the NEXT run if still whole (deploy mode: \`${mode}\`).`, '', `Run: ${run}`].join('\n'),
-                plan.unbench.includes(key) ? `Still whole — **un-benching now** (deploy mode \`${mode}\`).\n\nRun: ${run}` : `Still whole on this run.\n\nRun: ${run}`);
-            }
-            for (const key of plan.resurrected) {
-              await upsert(`Retired client works again: ${key}`,
-                [`## Retired client \`${key}\` drained a whole song`, '', reasons(key), '', 'The app removed this client as dead. Re-adding it is a validated table change (`node tests/validate-stream-clients.mjs` against a candidate file) — never automatic.', '', `Run: ${run}`].join('\n'),
-                `Still working on this run.\n\nRun: ${run}`);
-            }
-            for (const d of drift.drift || []) {
-              // A verified bump deploys this run (deploy mode permitting) — no issue needed unless
-              // deploy is off; an unverified one gets the issue with the reason.
-              const verified = plan.bumps.some((b) => b.key === d.key);
-              const what = Object.entries(d.changes || {}).map(([f, c]) => `- \`${f}\`: \`${c.from}\` → \`${c.to}\``).join('\n');
-              if (verified && mode !== '(disabled)') { console.log(`${d.key}: verified bump, deploying (mode ${mode})`); continue; }
-              await upsert(`Stream client identity drift: ${d.key}`,
-                [`## \`${d.key}\` is behind yt-dlp master (\`${d.ytdlpKey}\`)`, '', what, '',
-                 verified ? `The candidate drained whole songs on every validation video — it would deploy, but auto-deploy is off (AUTO_DEPLOY_CLIENTS=\`${mode}\`).`
-                          : `The candidate could NOT be verified from this runner: ${d.verify || 'no result'}. It is retried every run; with SCAN_PROXY (residential egress) login-less clients become verifiable.`,
-                 '', `Run: ${run}`].join('\n'),
-                `${verified ? 'Verified but not deployed (auto-deploy off)' : 'Still not verified: ' + (d.verify || 'no result')}.\n\nRun: ${run}`);
-            }
-            if (!plan.conclusive) {
-              await upsert('Stream client scan inconclusive',
-                ['## No client drained a whole song on any validation video', '', 'Nothing was benched — the runner, cookie, or cipher is suspect, not the table. Check the cookie secrets, `SCAN_PROXY`, `VALIDATION_VIDEO_IDS`, and the scan log artifact.', '', `Run: ${run}`].join('\n'),
-                `Still inconclusive.\n\nRun: ${run}`);
-            }
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/tools/clients/issues.cjs`);
+            await sync({ github, context, core, mode: process.env.MODE });
 
       - name: Send email notification
         if: ${{ !cancelled() && env.GMAIL_USER != '' }}
