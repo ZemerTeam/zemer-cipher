@@ -51,6 +51,11 @@ name: Stream Client Monitor
     # Two consecutive failing runs are the bench quorum.
     - cron: '17 */3 * * *'
   workflow_dispatch:
+    inputs:
+      attempt:
+        description: 'Runner attempt (the egress re-dispatch counter; leave at 1)'
+        required: false
+        default: '1'
   repository_dispatch:
     types: [client-cron]
   push:
@@ -129,6 +134,7 @@ jobs:
     timeout-minutes: 45
     permissions: {}
     outputs:
+      egress_verified: ${{ steps.egress.outputs.verified }}
       action_count: ${{ steps.preplan.outputs.action_count }}
       summary: ${{ steps.preplan.outputs.summary }}
       conclusive: ${{ steps.preplan.outputs.conclusive }}
@@ -157,19 +163,6 @@ jobs:
 
       # Residential-grade egress for the drains (see EGRESS above). WARP is connected only around
       # the drain steps and disconnected before the artifact upload.
-      - name: Connect WARP egress
-        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' }}
-        run: |
-          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
-          sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp >/dev/null
-          warp-cli --accept-tos registration new >/dev/null
-          warp-cli --accept-tos mode warp >/dev/null
-          warp-cli --accept-tos connect >/dev/null
-          for i in $(seq 1 20); do warp-cli --accept-tos status | grep -q Connected && break; sleep 2; done
-          warp-cli --accept-tos status | head -1
-          curl -s https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo)='
-
       - name: Install harness dependencies
         run: |
           npm ci --prefix harness/tests
@@ -181,6 +174,57 @@ jobs:
           # a bare `ln -s` would land INSIDE it — remove the placeholder first.)
           rm -rf harness/cipher && ln -s "$GITHUB_WORKSPACE" harness/cipher
           test -f harness/cipher/library/src/main/assets/player_configs.json
+
+      # Residential-grade egress for the drains (see EGRESS above). WARP's egress IP varies by colo
+      # and some pools are gated too (measured: ORD passed, IAD gated), so the egress is VERIFIED
+      # with one app-exact anonymous /player (probe-bot-gate QUICK) and re-rolled - new
+      # registration, alternating tunnel protocol - until it passes or the attempts run out. WARP
+      # is disconnected again before the artifact upload.
+      - name: Connect WARP egress (verified, re-rolled until the bot gate lifts)
+        id: egress
+        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          STREAM_CLIENTS_JSON: ${{ github.workspace }}/library/src/main/assets/stream_clients.json
+          EGRESS_ATTEMPTS: ${{ vars.EGRESS_ATTEMPTS }}
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp >/dev/null
+          ok=""
+          for attempt in $(seq 1 "${EGRESS_ATTEMPTS:-6}"); do
+            warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
+            warp-cli --accept-tos registration delete >/dev/null 2>&1 || true
+            warp-cli --accept-tos registration new >/dev/null
+            warp-cli --accept-tos mode warp >/dev/null
+            if [ $((attempt % 2)) -eq 0 ]; then warp-cli --accept-tos tunnel protocol set MASQUE >/dev/null 2>&1 || true; else warp-cli --accept-tos tunnel protocol set WireGuard >/dev/null 2>&1 || true; fi
+            warp-cli --accept-tos connect >/dev/null
+            for i in $(seq 1 20); do warp-cli --accept-tos status | grep -q Connected && break; sleep 2; done
+            TRACE=$(curl -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo|ip)=' | tr '\n' ' ')
+            # IPv6 egress on purpose: WARP's shared IPv4 pool answered UNPLAYABLE where the same
+            # colo's v6 passed (probe 2026-09-02, SJC), so v4 is never tried here.
+            if QUICK=1 node harness/tests/probe-bot-gate.mjs; then
+              echo "egress attempt $attempt OK: $TRACE"; ok=1; break
+            fi
+            echo "::warning::egress attempt $attempt not clean ($TRACE) - re-rolling"
+          done
+          if [ -z "$ok" ]; then
+            echo "::warning::no WARP egress passed the bot gate after ${EGRESS_ATTEMPTS:-6} attempts on this runner"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "verified=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A runner whose egress never verified must NOT scan (its anonymous verdicts would be the
+      # runner's, not the clients'): fail here, and the `redispatch` job below re-runs the whole
+      # workflow on a FRESH runner (a different Azure region lands on a different WARP colo), up to
+      # MAX_RUNNER_ATTEMPTS (default 4) times. A bot-gated verdict is never accepted by design.
+      - name: Refuse to scan from a gated runner
+        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' && steps.egress.outputs.verified != 'true' }}
+        run: |
+          echo "::error::egress not verified on this runner (attempt ${{ github.event.inputs.attempt || '1' }}) - refusing to scan; re-dispatching on a fresh runner"
+          exit 1
 
       # Whole-song drains of every known client on every validation video, against THIS repo's table
       # (STREAM_CLIENTS_JSON points the loader at the checked-out file, so a branch run scans the
@@ -286,6 +330,35 @@ jobs:
             /tmp/bumps.json
             /tmp/scan.log
           retention-days: 14
+
+  # Runner roulette: when the scan job refused to run on a gated egress, dispatch the workflow
+  # again with attempt+1 - a fresh runner, a different colo. Bounded by MAX_RUNNER_ATTEMPTS.
+  redispatch:
+    needs: [gate, scan]
+    if: >-
+      always() && needs.gate.outputs.run == 'true' && needs.scan.result == 'failure' &&
+      needs.scan.outputs.egress_verified != 'true' &&
+      (vars.SCAN_EGRESS || 'warp') == 'warp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Re-dispatch on a fresh runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
+          MAX: ${{ vars.MAX_RUNNER_ATTEMPTS }}
+        run: |
+          NEXT=$((ATTEMPT + 1))
+          if [ "$NEXT" -gt "${MAX:-4}" ]; then
+            echo "::error::egress unverified on ${ATTEMPT} runners - giving up this cycle (next schedule retries)"
+            exit 1
+          fi
+          echo "re-dispatching client-monitor on $REF as attempt $NEXT"
+          gh workflow run client-monitor.yml --repo "$REPO" --ref "$REF" -f attempt="$NEXT"
 
   # Issues are the pipeline's MEMORY: a "failing" issue open from a previous run is what promotes a
   # dead client to a bench (and a "revived" issue to an un-bench) — one bad scan can never write.

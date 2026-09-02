@@ -141,8 +141,16 @@ runners are bot-gated for anonymous InnerTube requests, so without it the login-
 `VALIDATION_VIDEO_IDS` (comma-separated; more videos = a stronger quorum). **Egress**: the scan job
 connects Cloudflare WARP by default (`SCAN_EGRESS` = `warp` | `proxy` | `none`): GitHub's runners are
 bot-gated for every anonymous request (`probe-bot-gate.yml` measured 2026-09-02: app-exact,
-fresh-visitor and pot-carrying variants all gated from the bare runner; all pass through WARP), and
-only through a residential-grade egress do the login-less clients get the app's own results.
+fresh-visitor and pot-carrying variants all gated from the bare runner), and only through a
+residential-grade egress do the login-less clients get the app's own results. WARP's pools differ
+by colo (ORD, DFW, LAX passed; IAD was gated), so the step VERIFIES the egress with one app-exact
+anonymous `/player` (`probe-bot-gate.mjs` `QUICK=1`) and re-rolls the registration — alternating
+the tunnel protocol — up to `EGRESS_ATTEMPTS` (default 6) times until it passes (IPv6 only: WARP's
+IPv4 pool answered UNPLAYABLE where the same colo's v6 passed). If no attempt on the runner passes,
+the scan REFUSES to run there and the workflow re-dispatches itself on a fresh runner (a different
+region lands on a different colo), up to `MAX_RUNNER_ATTEMPTS` (default 4). A bot-gated verdict is
+never accepted: either the egress is proven clean before a single drain, or the cycle ends with an
+error and the next schedule tries again.
 **Include gated content**: on
 an ungated video (measured 2026-09-01 with `dQw4w9WgXcQ`) even the retired IOS, MWEB and ANDROID_VR
 clients drain whole songs, progressively and over SABR. "Dead" needs failure on every video and
