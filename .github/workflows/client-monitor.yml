@@ -327,7 +327,10 @@ jobs:
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
           YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
           SCAN_PROXY: ${{ (vars.SCAN_EGRESS || 'warp') == 'proxy' && secrets.SCAN_PROXY || '' }}
-          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
+          # Two gated videos (a retired client 403s at 0 KB on both, 2026-09-02): a client must be
+          # whole on every video to count as working and fail on every video to count as dead, and
+          # one video being pulled or region-locked cannot blind the monitor.
+          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS || 'JTF9fLJvniI,kJQP7kiw5Fk' }}
           # The retired clients feed only the "works again" alert: slot 1 covers them, the other
           # slots drain the table alone (the two transports already run concurrently inside).
           # The retired clients (the "works again" alert) drain on one x64 and one ARM slot: a single
@@ -368,7 +371,7 @@ jobs:
           YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
           YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
           SCAN_PROXY: ${{ (vars.SCAN_EGRESS || 'warp') == 'proxy' && secrets.SCAN_PROXY || '' }}
-          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS }}
+          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS || 'JTF9fLJvniI,kJQP7kiw5Fk' }}
         run: |
           mkdir -p /tmp/cand
           echo '[]' > /tmp/bumps.json
