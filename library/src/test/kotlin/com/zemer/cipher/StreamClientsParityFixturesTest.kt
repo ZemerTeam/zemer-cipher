@@ -33,9 +33,24 @@ class StreamClientsParityFixturesTest {
 
     @Test
     fun `accept fixtures parse as Success`() {
-        for (file in dir().listFiles().orEmpty().filter { it.name.startsWith("accept-") }) {
+        for (file in dir().listFiles().orEmpty().filter { it.name.startsWith("accept-") && !it.name.endsWith(".expect.json") }) {
             val result = StreamClientParser.parse(file.readText())
             assertTrue("${file.name}: expected Success, got $result", result is StreamClientParser.ParseResult.Success)
+        }
+    }
+
+    @Test
+    fun `accept fixtures yield the pinned live chain and skips (entry-level parity)`() {
+        // <name>.expect.json pins WHICH entries survive and which are skipped, in order — the
+        // harness loader checks the same sidecars, so the two readers agree on more than the verdict.
+        for (file in dir().listFiles().orEmpty().filter { it.name.startsWith("accept-") && !it.name.endsWith(".expect.json") }) {
+            val expect = File(file.parentFile, file.name.removeSuffix(".json") + ".expect.json")
+            if (!expect.exists()) continue
+            val json = kotlinx.serialization.json.Json.parseToJsonElement(expect.readText()) as kotlinx.serialization.json.JsonObject
+            val keys = { name: String -> (json[name] as kotlinx.serialization.json.JsonArray).map { (it as kotlinx.serialization.json.JsonPrimitive).content } }
+            val result = StreamClientParser.parse(file.readText()) as StreamClientParser.ParseResult.Success
+            org.junit.Assert.assertEquals("${file.name} live chain", keys("clients"), result.config.clients.map { it.key })
+            org.junit.Assert.assertEquals("${file.name} skipped", keys("skipped"), result.skippedEntries)
         }
     }
 

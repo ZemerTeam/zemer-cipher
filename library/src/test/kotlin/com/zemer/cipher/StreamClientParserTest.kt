@@ -257,4 +257,109 @@ class StreamClientParserTest {
             failure(file(entry(extra = """, "sabr": $bad""")))
         }
     }
+
+    // ---- boundaries: every limit is tested one step inside and one step outside ----
+
+    private fun entryWith(key: String, vararg fields: Pair<String, String>) = """
+        {
+          "key": "$key",
+          "clientName": "${fields.toMap()["clientName"] ?: key}",
+          "clientVersion": "${fields.toMap()["clientVersion"] ?: "1.0"}",
+          "clientId": "${fields.toMap()["clientId"] ?: "67"}",
+          "userAgent": "${fields.toMap()["userAgent"] ?: "Mozilla/5.0 (test)"}",
+          "protocol": "web_cipher_pot",
+          "family": "$key"
+        }
+    """.trimIndent()
+
+    @Test
+    fun `key alphabet and length boundaries`() {
+        assertEquals(1, success(file(entryWith("A".repeat(32)))).clients.size)
+        failure(file(entryWith("A".repeat(33))))          // main invalid -> file rejected
+        failure(file(entryWith("web_remix")))             // lowercase
+        failure(file(entryWith("WEB-REMIX")))             // dash
+        assertEquals(listOf("MAIN"), success(file(entryWith("MAIN"), entryWith("A".repeat(33)))).clients.map { it.key })
+    }
+
+    @Test
+    fun `clientId is 1-4 digits, versions are versionish, user agents are printable ASCII up to 300`() {
+        assertEquals(1, success(file(entryWith("MAIN", "clientId" to "9999"))).clients.size)
+        failure(file(entryWith("MAIN", "clientId" to "10000")))
+        failure(file(entryWith("MAIN", "clientId" to "67a")))
+        assertEquals(1, success(file(entryWith("MAIN", "clientVersion" to "1.20260707.12.00"))).clients.size)
+        failure(file(entryWith("MAIN", "clientVersion" to "1.0 beta")))
+        failure(file(entryWith("MAIN", "clientVersion" to "v".repeat(33))))
+        assertEquals(1, success(file(entryWith("MAIN", "userAgent" to "u".repeat(300)))).clients.size)
+        failure(file(entryWith("MAIN", "userAgent" to "u".repeat(301))))
+        failure(file(entryWith("MAIN", "userAgent" to "Mozilla/5.0 \\u00e9")))   // non-ASCII
+        failure(file(entryWith("MAIN", "userAgent" to "Mozilla\\r\\nX-Evil: 1")))
+    }
+
+    @Test
+    fun `client count boundary - 32 entries accepted, 33 rejected wholesale`() {
+        val ok = (1..32).map { entryWith("K$it") }
+        assertEquals(32, success(file(*ok.toTypedArray())).clients.size)
+        val over = (1..33).map { entryWith("K$it") }
+        assertTrue(failure(file(*over.toTypedArray())).contains("too many"))
+        // Skipped entries do not count toward the cap.
+        val skipped = (1..40).map { if (it <= 32) entryWith("K$it") else entryWith("K$it") .replace("\"family\"", "\"enabled\": false, \"family\"") }
+        assertEquals(32, success(file(*skipped.toTypedArray())).clients.size)
+    }
+
+    @Test
+    fun `schemaVersion boundaries and shapes`() {
+        assertEquals(1, success(file(entryWith("MAIN"), schemaVersion = "1")).clients.size)
+        failure(file(entryWith("MAIN"), schemaVersion = "0"))
+        failure(file(entryWith("MAIN"), schemaVersion = "-1"))
+        failure(file(entryWith("MAIN"), schemaVersion = "2"))
+        failure(file(entryWith("MAIN"), schemaVersion = "\"1\""))
+        failure(file(entryWith("MAIN"), schemaVersion = "true"))
+        failure(file(entryWith("MAIN"), schemaVersion = "null"))
+    }
+
+    @Test
+    fun `booleans must be strict booleans - strings and numbers skip the entry`() {
+        failure(file(entryWith("MAIN").replace("\"family\"", "\"loginSupported\": \"true\", \"family\"")))
+        failure(file(entryWith("MAIN").replace("\"family\"", "\"skipHeadValidation\": 1, \"family\"")))
+        assertTrue(success(file(entryWith("MAIN").replace("\"family\"", "\"loginRequired\": null, \"family\""))).clients[0].loginRequired.not())
+    }
+
+    @Test
+    fun `unknown fields such as mirrors are ignored, never a reason to skip`() {
+        val c = success(file(entryWith("MAIN").replace("\"family\"", "\"mirrors\": \"web_music\", \"notes\": [1, {}], \"family\""))).clients[0]
+        assertEquals("MAIN", c.key)
+    }
+
+    @Test
+    fun `optional identity fields - present-but-wrong-type skips, explicit null is absent`() {
+        failure(file(entryWith("MAIN").replace("\"family\"", "\"osVersion\": 12, \"family\"")))
+        failure(file(entryWith("MAIN").replace("\"family\"", "\"androidSdkVersion\": 32, \"family\"")))   // must be a string
+        assertNull(success(file(entryWith("MAIN").replace("\"family\"", "\"deviceMake\": null, \"family\""))).clients[0].deviceMake)
+        assertEquals("32", success(file(entryWith("MAIN").replace("\"family\"", "\"androidSdkVersion\": \"32\", \"family\""))).clients[0].androidSdkVersion)
+    }
+
+    @Test
+    fun `families - a client without a families row still parses, bad and duplicate rows are tolerated`() {
+        val cfg = success(file(entryWith("MAIN"), families = """[
+            {"id": "MAIN", "title": "First", "group": "web"},
+            {"id": "MAIN", "title": "Second", "group": "web"},
+            {"id": "bad id", "title": "x", "group": "web"},
+            {"id": "LONGTITLE", "title": "${"t".repeat(49)}", "group": "web"},
+            {"id": "BADGROUP", "title": "x", "group": "Web"},
+            "not an object", null, 7
+        ]"""))
+        assertEquals(mapOf("MAIN" to "First"), cfg.families.mapValues { it.value.title })
+        assertTrue(success(file(entryWith("MAIN"), families = "\"nope\"")).families.isEmpty())
+        assertTrue(success(file(entryWith("MAIN"), families = "null")).families.isEmpty())
+    }
+
+    @Test
+    fun `whitespace, key order and trailing data do not matter - only shape does`() {
+        val compact = """{"clients":[{"family":"MAIN","protocol":"direct","userAgent":"ua","clientId":"1","clientVersion":"1","clientName":"MAIN","key":"MAIN"}],"schemaVersion":1}"""
+        assertEquals("MAIN", success(compact).clients[0].key)
+        failure("$compact trailing")
+        failure("")
+        failure("[]")
+        failure("null")
+    }
 }

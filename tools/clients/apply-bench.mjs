@@ -27,7 +27,12 @@ const ENABLED_FALSE_RE = /^\s*"enabled"\s*:\s*false\s*,?\s*$/;
  * `}` line by brace depth (a nested `sabr: { ... }` block must not end the entry early). Assumes
  * the file's pretty-printed one-field-per-line layout; the harness loader re-parse is the gate.
  */
+const KEY_RE = /^[A-Z0-9_]{1,32}$/;
+
 function entryBounds(lines, key) {
+  // The key is interpolated into a regex: only the parser's key alphabet may pass (a `.` or `|`
+  // would otherwise match OTHER entries' key lines).
+  if (!KEY_RE.test(key)) throw new Error(`invalid key ${JSON.stringify(key)} (must match ${KEY_RE})`);
   const keyRe = new RegExp(`^(\\s*)"key"\\s*:\\s*"${key}"\\s*,?\\s*$`);
   const hits = lines.map((l, i) => (keyRe.test(l) ? i : -1)).filter((i) => i >= 0);
   if (hits.length !== 1) throw new Error(`expected exactly one "key": "${key}" line, found ${hits.length}`);

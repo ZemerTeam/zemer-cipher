@@ -20,8 +20,8 @@
 export const DEFINITIVE_FAILURES = new Set(["partial", "sabr-only", "no-format", "not-ok", "http-error"]);
 
 /**
- * Classify a scan. A LIVE client is DEAD only when the scan is conclusive (the MAIN client drained
- * a whole song somewhere, so the runner/cookie/cipher are known-good) AND every one of its results
+ * Classify a scan. A LIVE client is DEAD only when the scan is conclusive (SOME client drained a
+ * whole song somewhere, so the runner/cookie/cipher are known-good) AND every one of its results
  * is a definitive failure on every validation video. One whole song anywhere = healthy. Anything
  * with an inconclusive result and no success = inconclusive, never dead. A BENCHED entry that
  * drained a whole song is `revived`; a RETIRED client that did is `resurrected`. Non-live entries

@@ -117,7 +117,7 @@ each outcome has one response:
 | a benched entry drains whole songs, two consecutive runs | **un-bench** it and deploy |
 | a retired client drains a whole song | issue *Retired client works again* (re-adding is a human, validated table change) |
 | an entry's identity (clientVersion, userAgent, os/device) is behind yt-dlp master (`tests/scan-client-versions.mjs`, per the entry's `mirrors` key) | **bump** it: the entry is copied into a candidate table with yt-dlp's values (`tools/clients/apply-bump.mjs --out`), the candidate must drain a whole song on EVERY validation video, then it deploys; an unverified candidate only opens an *identity drift* issue with the reason |
-| the MAIN client drained nothing anywhere | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table |
+| no client at all drained a whole song | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table (a dead MAIN with healthy fallbacks is reported as dead — a human decision — and its yt-dlp bump can revive it) |
 | "Sign in to confirm you're not a bot" on an anonymous request | `bot-gated` = INCONCLUSIVE (the runner's IP, not the client): never a kill, never a bench, never a verified bump |
 
 The open detection issues are the pipeline's memory: a client is benched only when its *failing*

@@ -101,6 +101,25 @@ test("the workflow's inline issue-title literals match decide.mjs (one definitio
   assert.ok(yml.includes('"Stream client failing: "*)') && yml.includes('"Stream client revived: "*)'), "notify close cases drifted");
 });
 
+test("classify edge cases: empty scan, missing roles, mixed verdicts, retired keys never bench", () => {
+  assert.deepEqual(classify(null).dead, []); assert.deepEqual(classify({}).healthy, []);
+  const c = classify(scan(true, [
+    { key: "WEB_REMIX", main: true, results: [r("a", "whole")] },
+    { key: "NOROLE", results: [r("a", "partial")] },                         // role defaults to live
+    { key: "MIXED", results: [r("a", "partial"), r("b", "bot-gated")] },     // one inconclusive result -> inconclusive
+    { key: "HTTP", results: [r("a", "http-error"), r("b", "sabr-only")] },   // all definitive -> dead
+    { key: "GONE", role: "retired", results: [r("a", "partial")] },
+  ]));
+  assert.deepEqual(c.dead.map((x) => x.key), ["NOROLE", "HTTP"]);
+  assert.deepEqual(c.inconclusive.map((x) => x.key), ["MIXED"]);
+  assert.deepEqual(c.stillDead.map((x) => x.key), ["GONE"]);
+  // A retired key can never be benched even if someone lists it as dead.
+  const p = planBenches({ liveKeys: ["WEB_REMIX", "A", "B", "C"], dead: [{ key: "GONE" }, { key: "A" }], previouslyFlagged: ["GONE", "A", "A"] });
+  assert.deepEqual(p.bench, ["A"]); assert.equal(p.refused[0].key, "GONE");
+  // Un-bench of something not revived is impossible; flagged extras are ignored.
+  assert.deepEqual(planUnbenches({ revived: [], previouslyFlagged: ["X"] }).unbench, []);
+});
+
 test("issue titles round-trip through the dedup regex", () => {
   assert.equal(revivedTitle("X").match(REVIVED_TITLE_RE)[1], "X");
   const m = issueTitle("TVHTML5_SIMPLY").match(ISSUE_TITLE_RE);
@@ -187,6 +206,8 @@ test("unbench handles a hand-written kill switch: no space, no trailing comma (l
 
 test("benchEntryText refuses an unknown or ambiguous key", () => {
   assert.throws(() => benchEntryText(TABLE, "NOPE"), /found 0/);
+  assert.throws(() => benchEntryText(TABLE, "VISION.*"), /invalid key/);
+  assert.throws(() => unbenchEntryText(TABLE, ""), /invalid key/);
   assert.throws(() => benchEntryText(TABLE + TABLE, "VISIONOS"), /found 2/);
 });
 
@@ -254,6 +275,20 @@ test("bumpEntryText replaces an identity field in place and inserts a missing on
   assert.deepEqual(lines.slice(cv + 1, cv + 3), ['      "osName": "visionOS",', '      "osVersion": "26.5.23O471",']);
   assert.deepEqual(verifyBump(VTABLE, ins.text, "VISIONOS", { osName: "visionOS", osVersion: "26.5.23O471" }, vParse).changes,
     { osName: { from: null, to: "visionOS" }, osVersion: { from: null, to: "26.5.23O471" } });
+});
+
+test("bumpEntryText keeps JSON valid when clientVersion is the entry's last field, and refuses regex-unsafe keys", () => {
+  const lastField = `{\n  "schemaVersion": 1,\n  "clients": [\n    {\n      "key": "A",\n      "clientName": "A",\n      "clientId": "1",\n      "userAgent": "ua",\n      "protocol": "direct",\n      "family": "A",\n      "clientVersion": "1.0"\n    }\n  ]\n}\n`;
+  const one = bumpEntryText(lastField, "A", { osName: "X" });
+  assert.equal(JSON.parse(one.text).clients[0].osName, "X");
+  const two = bumpEntryText(lastField, "A", { osName: "X", osVersion: "2" });
+  const c = JSON.parse(two.text).clients[0];
+  assert.equal(c.osName, "X"); assert.equal(c.osVersion, "2"); assert.equal(c.clientVersion, "1.0");
+  assert.throws(() => bumpEntryText(lastField, "A|B", { osName: "X" }), /invalid key/);
+  assert.throws(() => bumpEntryText(lastField, "a", { osName: "X" }), /invalid key/);
+  // CRLF files survive too.
+  const crlf = bumpEntryText(lastField.replace(/\n/g, "\r\n"), "A", { clientVersion: "2.0" });
+  assert.equal(JSON.parse(crlf.text).clients[0].clientVersion, "2.0");
 });
 
 test("bumpEntryText is a no-op at the target values and refuses non-identity or invalid fields", () => {

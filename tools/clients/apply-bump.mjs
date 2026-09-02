@@ -32,7 +32,12 @@ const VALID = {
   deviceModel: (v) => v.length > 0 && v.length <= 64 && /^[\x20-\x7E]+$/.test(v),
 };
 
+const KEY_RE = /^[A-Z0-9_]{1,32}$/;
+
 function entryBounds(lines, key) {
+  // The key is interpolated into a regex: only the parser's key alphabet may pass (a `.` or `|`
+  // would otherwise match OTHER entries' key lines).
+  if (!KEY_RE.test(key)) throw new Error(`invalid key ${JSON.stringify(key)} (must match ${KEY_RE})`);
   const keyRe = new RegExp(`^(\\s*)"key":\\s*"${key}",?\\s*$`);
   const hits = lines.map((l, i) => (keyRe.test(l) ? i : -1)).filter((i) => i >= 0);
   if (hits.length !== 1) throw new Error(`expected exactly one "key": "${key}" line, found ${hits.length}`);
@@ -70,8 +75,13 @@ export function bumpEntryText(text, key, fields) {
         for (let i = open; i <= close; i++) if (/^\s*"clientVersion":/.test(lines[i])) { insertAt = i; break; }
         if (insertAt < 0) throw new Error(`entry ${key} has no clientVersion line to anchor on`);
       }
+      // Insert after the anchor. If the anchor is the entry's LAST field (no trailing comma),
+      // give it one and make the new line the last field instead — the object stays valid JSON
+      // wherever clientVersion sits.
+      const anchorLast = !/,\s*$/.test(lines[insertAt]);
+      if (anchorLast) lines[insertAt] = lines[insertAt].replace(/\s*$/, ",");
       insertAt += 1;
-      lines.splice(insertAt, 0, `${indent}"${field}": ${JSON.stringify(value)},`);
+      lines.splice(insertAt, 0, `${indent}"${field}": ${JSON.stringify(value)}${anchorLast ? "" : ","}`);
       close += 1;
     }
     applied[field] = value;

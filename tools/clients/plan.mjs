@@ -36,7 +36,7 @@ for (const d of drift.drift || []) {
 }
 for (const r of verdict.revived) lines.push(`- ${r.key}: benched entry drains whole songs again — ${unplan.unbench.includes(r.key) ? "UN-BENCHING" : "un-bench on the next run if still whole"}`);
 for (const r of verdict.resurrected) lines.push(`- ${r.key}: RETIRED client works again — consider re-adding (human)`);
-if (!verdict.conclusive) lines.push("- scan INCONCLUSIVE (the main client drained no whole song — runner/cookie/cipher suspect)");
+if (!verdict.conclusive) lines.push("- scan INCONCLUSIVE (no client drained a whole song — runner/cookie/cipher suspect)");
 for (const i of verdict.inconclusive) lines.push(`- ${i.key}: inconclusive — ${i.reasons.join("; ")}`);
 
 const out = {
