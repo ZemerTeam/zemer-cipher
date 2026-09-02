@@ -146,8 +146,8 @@ residential-grade egress do the login-less clients get the app's own results. WA
 by colo (ORD, DFW, LAX passed; IAD was gated), so the step VERIFIES the egress with one app-exact
 anonymous `/player` (`probe-bot-gate.mjs` `QUICK=1`) and re-rolls the registration — alternating
 the tunnel protocol — up to `EGRESS_ATTEMPTS` (default 2) times until it passes (IPv6 only: WARP's
-IPv4 pool answered UNPLAYABLE where the same colo's v6 passed). The scan runs as THREE parallel egress
-slots (three runners, three regions, three colos): only a slot whose egress verified drains, and
+IPv4 pool answered UNPLAYABLE where the same colo's v6 passed). The scan runs as FOUR parallel egress
+slots (four runners, four regions, four colos): only a slot whose egress verified drains, and
 `collect` takes the first verified result - one gated colo no longer costs a run. If no slot
 verifies, the workflow re-dispatches itself on fresh runners, up to `MAX_RUNNER_ATTEMPTS`
 (default 4) sets. A bot-gated verdict is

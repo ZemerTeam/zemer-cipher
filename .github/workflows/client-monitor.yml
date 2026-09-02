@@ -130,7 +130,7 @@ jobs:
 
   # EGRESS SLOTS: the same scan on several runners AT ONCE. WARP's colo follows the runner's
   # region and does not change when WARP re-registers (an IAD runner re-rolled six IAD addresses,
-  # all gated), so one runner is a coin flip - three independent runners almost never all land on
+  # all gated), so one runner is a coin flip - four independent runners almost never all land on
   # a gated colo. Each slot proves its own egress before a single drain; only verified slots drain
   # and upload; `collect` takes the first verified result. Costs no wall-clock time.
   scan:
@@ -142,7 +142,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slot: [1, 2, 3]
+        slot: [1, 2, 3, 4]
     steps:
       - name: Checkout zemer-cipher
         uses: actions/checkout@v4
@@ -324,15 +324,15 @@ jobs:
           done
           echo "verified bumps: $(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/bumps.json','utf8')).map(b=>b.key).join(' ')||'none')")"
 
-      - name: Disconnect WARP egress
-        if: ${{ always() && (vars.SCAN_EGRESS || 'warp') == 'warp' }}
-        continue-on-error: true
-        run: warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
-
       - name: Record the egress this slot drained through
         run: |
           echo "slot=${{ matrix.slot }} egress=warp ipv6=${FORCE_IPV6:-0} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
           cat /tmp/egress.txt
+
+      - name: Disconnect WARP egress
+        if: ${{ always() && (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        continue-on-error: true
+        run: warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
 
       - name: Upload this slot's results
         uses: actions/upload-artifact@v4
@@ -378,7 +378,7 @@ jobs:
         id: pick
         run: |
           ls -d /tmp/slots/client-scan-slot-* 2>/dev/null || true
-          for d in /tmp/slots/client-scan-slot-1 /tmp/slots/client-scan-slot-2 /tmp/slots/client-scan-slot-3; do
+          for d in /tmp/slots/client-scan-slot-1 /tmp/slots/client-scan-slot-2 /tmp/slots/client-scan-slot-3 /tmp/slots/client-scan-slot-4; do
             if [ -s "$d/scan.json" ]; then
               cp "$d"/scan.json "$d"/drift.json "$d"/bumps.json "$d"/scan.log "$d"/egress.txt /tmp/ 2>/dev/null || true
               echo "using $(cat "$d/egress.txt")"
