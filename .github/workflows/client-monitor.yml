@@ -141,6 +141,20 @@ jobs:
         env:
           HARNESS_DIR: ${{ github.workspace }}/harness-tests
         run: node --test tools/clients/clients.test.mjs tools/clients/merge-slots.test.mjs tools/clients/simulate.test.mjs tools/clients/gate.test.mjs
+      # The harness's own unit tests (drain verdicts, the SABR session refresh, the loader parity
+      # rules): a harness regression fails HERE, before any slot drains with it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('harness-tests/tests/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - name: Run harness unit tests
+        env:
+          SABR_RETRY_MS: '1'
+        run: |
+          npm ci --prefix harness-tests/tests --prefer-offline --no-audit --no-fund
+          rm -rf harness-tests/cipher && ln -s "$GITHUB_WORKSPACE" harness-tests/cipher
+          node --test harness-tests/tests/*.test.mjs
 
   # EGRESS SLOTS: the same scan on several runners AT ONCE. WARP's colo follows the runner's
   # region and does not change when WARP re-registers (an IAD runner re-rolled six IAD addresses,
