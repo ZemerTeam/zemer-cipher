@@ -1,0 +1,10 @@
+{
+  "clients": [
+    "MAIN",
+    "DIRECT_ONE"
+  ],
+  "skipped": [
+    "BENCHED",
+    "FUTURE"
+  ]
+}

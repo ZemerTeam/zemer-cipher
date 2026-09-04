@@ -92,6 +92,88 @@ Run the tests with `./gradlew :library:testDebugUnitTest`. The `config-parity/` 
 shared with the `zemer-app` harness: file-level accept/reject verdicts (and the n-IIFE
 template) are pinned byte-for-byte across both readers.
 
+## Stream clients (`library/src/main/assets/stream_clients.json`)
+
+The second remote table: the YouTube clients the app's stream resolution may use, their fallback
+ORDER (entry 0 = main), per-client flags, which entries the SABR transport may use (`sabr`), and
+the `enabled: false` kill switch. Same deploy model as the player configs — bundled in the APK,
+fetched from this repo's master at runtime (`StreamClientStore`, 6 h TTL, plus a forced refresh
+after a total resolution failure), read by the zemer-app harness (`tests/stream-clients.mjs`), and
+pinned across the two readers by `src/test/resources/stream-clients-parity/`.
+
+### Automated monitoring (`.github/workflows/client-monitor.yml`)
+
+There is no upstream artifact to "scan" for clients the way `player_ias` hashes are scanned, so the
+monitor measures the thing that matters directly: after every completed run of the player monitor
+(`workflow_run`, rate-limited to one scan per `MIN_SCAN_INTERVAL_MINUTES`, default 30) and at
+least every 3 h, it drains a whole song through EVERY known client on the validation videos, using the zemer-app harness (`tests/scan-stream-clients.mjs`
+= the same `client-fulldownload.mjs` drain a human runs). The roster is dynamic — the table's live
+entries, its benched entries, and every client the app retired (`tests/clients-retired.mjs`) — and
+each outcome has one response:
+
+| Observation (on every validation video) | Action |
+|---|---|
+| a live entry fails, two consecutive runs | **bench** it (`enabled: false`) and deploy |
+| a benched entry drains whole songs on EVERY validation video, two consecutive runs | **un-bench** it and deploy |
+| a `sabr`-capable entry fails over SABR on every video, two consecutive runs (`tests/sabr-clients.mjs` drain, the same scan) | **bench its SABR capability** (`sabr.enabled: false`) and deploy — the entry keeps streaming progressively and keeps its SABR identity overrides |
+| a SABR-benched entry drains whole songs over SABR, two consecutive runs | **un-bench the SABR capability** and deploy |
+| a retired client drains whole songs on EVERY validation video | issue *Retired client works again* (re-adding is a human, validated table change) |
+| an entry's identity (clientVersion, userAgent, os/device) is behind yt-dlp master (`tests/scan-client-versions.mjs`, per the entry's `mirrors` key) | **bump** it: the entry is copied into a candidate table with yt-dlp's values (`tools/clients/apply-bump.mjs --out`), the candidate must drain a whole song on EVERY validation video, then it deploys; an unverified candidate only opens an *identity drift* issue with the reason |
+| no client at all drained a whole song | issue *scan inconclusive*; nothing benched — the runner, cookie or cipher is suspect, not the table (a dead MAIN with healthy fallbacks is reported as dead — a human decision — and its yt-dlp bump can revive it) |
+| "Sign in to confirm you're not a bot" on an anonymous request | `bot-gated` = INCONCLUSIVE (the runner's IP, not the client): never a kill, never a bench, never a verified bump |
+| a sign-in demand for a client that WAS sent the cookie | `auth-failed` = INCONCLUSIVE (the session expired/revoked, not the client) + issue *cookie expired or revoked* — refresh `YT_COOKIE`; nothing benched on its account |
+| every anonymous client fails while every cookie client drains whole | *anonymous egress suspect*: the runner, not three simultaneous deaths — inconclusive, alerted, nothing benched |
+
+An identity bump of a `sabr`-capable entry must drain whole songs over BOTH transports before it
+deploys. The open detection issues are the pipeline's memory: a client is benched only when its *failing*
+issue was already open (at least `MIN_FLAG_AGE_MINUTES`, default 30) before the run - a kill is benched within about an hour — one bad
+scan can never write. `tools/clients/decide.mjs` holds the rules (`clients.test.mjs`): the main is
+never benched, at least `MIN_LIVE_FALLBACKS` (default 2) live fallbacks must remain, and
+`tools/clients/apply-bench.mjs` (bench / un-bench: exactly ONE line) and `apply-bump.mjs`
+(identity bump: only clientVersion / userAgent / osName / osVersion / deviceMake / deviceModel /
+androidSdkVersion of ONE entry, values re-validated with the parser's shapes) are the only writers;
+both re-parse the result with the harness loader and refuse anything else — a different key,
+protocol, flag, order or entry can never change unattended. `CLIENT_MONITOR_ENABLED=false` (repository variable) is the emergency kill switch: every
+scan, alert and deploy stops on the next run. Deploy is gated by the repository
+variable `AUTO_DEPLOY_CLIENTS` (unset = alert only, `branch`, `master`) with the same
+read-back-and-revert step as the player pipeline; `CLIENT_HARNESS_REF` pins the zemer-app ref that
+supplies the harness. Secrets: `YT_COOKIE` / `YT_VISITOR_DATA` / `YT_DATASYNC_ID` (login-required
+clients are skipped without a cookie), `SCAN_PROXY` (a residential/mobile egress URL — GitHub's
+runners are bot-gated for anonymous InnerTube requests, so without it the login-less clients stay
+`bot-gated`/inconclusive and only the cookie-authenticated ones are judged), and the variable
+`VALIDATION_VIDEO_IDS` (comma-separated; more videos = a stronger quorum). **Egress**: the scan job
+connects Cloudflare WARP by default (`SCAN_EGRESS` = `warp` | `proxy` | `none`): GitHub's runners are
+bot-gated for every anonymous request (`probe-bot-gate.yml` measured 2026-09-02: app-exact,
+fresh-visitor and pot-carrying variants all gated from the bare runner), and only through a
+residential-grade egress do the login-less clients get the app's own results. WARP's pools differ
+by colo (ORD, DFW, LAX passed; IAD was gated), so the step VERIFIES the egress with one app-exact
+anonymous `/player` (`probe-bot-gate.mjs` `QUICK=1`) and re-rolls the registration — alternating
+the tunnel protocol — up to `EGRESS_ATTEMPTS` (default 2) times until it passes (IPv6 only: WARP's
+IPv4 pool answered UNPLAYABLE where the same colo's v6 passed). The scan runs as SIX parallel egress
+slots (six runners, six regions, six colos): only a slot whose egress verified - before AND
+after its drains, with a `/player` plus a CDN range - drains, and `collect` MERGES every verified
+slot (`tools/clients/merge-slots.mjs`): a whole song from any clean egress proves a client works; a
+failure counts only when the clean egresses AGREE (every slot, or at least two - a lone tunnel
+hiccup cannot veto a kill, a lone failing slot cannot declare one), so a false death needs
+independent egresses to be wrong together. A slot whose post-drain check fails is only partially trusted: its whole songs
+still count (they happened), its failures do not. Slots 5-6 run on ARM-hosted runners (a second
+Azure pool, other colos); identity-bump candidates are drained in slots 1-2 only. One gated colo no
+longer costs a run. `node tools/clients/report-runs.mjs [N]` prints the last N runs' verified slots,
+colos, merged verdicts and wall-clock - the reliability record. If no slot
+verifies, the workflow re-dispatches itself on fresh runners, up to `MAX_RUNNER_ATTEMPTS`
+(default 4) sets. A bot-gated verdict is
+never accepted: either the egress is proven clean before a single drain, or the cycle ends with an
+error and the next schedule tries again.
+**Include gated content**: on
+an ungated video (measured 2026-09-01 with `dQw4w9WgXcQ`) even the retired IOS, MWEB and ANDROID_VR
+clients drain whole songs, progressively and over SABR. "Dead" needs failure on every video and
+"revived / works again" needs a whole song on every video, so a validation set without a gated
+video can neither bench a walled client nor keep one benched. The default `JTF9fLJvniI` is gated.
+
+Entry field the harness reads and the app ignores: `mirrors` — the yt-dlp `INNERTUBE_CLIENTS` key
+whose identity the entry follows (`web_music`, `visionos`, ...). An entry without it is pinned on
+purpose (`VISIONOS_0_1`, the deliberately old second-chance config) and is never compared or bumped.
+
 ## Usage
 
 ### Initialization

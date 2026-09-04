@@ -1,0 +1,83 @@
+name: Probe bot gate
+# Diagnostic only: which request property trips "Sign in to confirm you're not a bot" for the
+# ANONYMOUS clients from a GitHub-hosted runner (the app on a phone never sees it). Manual dispatch.
+"on":
+  workflow_dispatch:
+  push:
+    branches: ['feat/remote-stream-clients']
+    paths: ['.github/workflows/probe-bot-gate.yml']
+concurrency:
+  group: probe-bot-gate
+permissions: {}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ZemerTeam/zemer-app
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: |
+          npm ci --prefix harness/tests
+          rm -rf harness/cipher && ln -s "$GITHUB_WORKSPACE" harness/cipher
+      - name: Probe
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          SCAN_PROXY: ${{ secrets.SCAN_PROXY }}
+        run: node harness/tests/probe-bot-gate.mjs
+
+  # The same probe with Cloudflare WARP as the egress (free, no home infrastructure): if YouTube
+  # classes WARP's IPs like a phone's, it is the cheapest residential-grade egress for the scan.
+  probe-warp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ZemerTeam/zemer-app
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Connect WARP
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq cloudflare-warp
+          warp-cli --accept-tos registration new
+          warp-cli --accept-tos mode warp
+          warp-cli --accept-tos connect
+          for i in $(seq 1 20); do warp-cli --accept-tos status | grep -q Connected && break; sleep 2; done
+          warp-cli --accept-tos status
+          curl -s https://www.cloudflare.com/cdn-cgi/trace | grep -E 'warp=|ip=|colo='
+      - run: |
+          npm ci --prefix harness/tests
+          rm -rf harness/cipher && ln -s "$GITHUB_WORKSPACE" harness/cipher
+      - name: Probe via WARP (IPv6 default, then IPv4-only)
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+        run: |
+          echo "--- v6 (default) ---"; curl -6 -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(ip|colo)=' || true
+          QUICK=1 node harness/tests/probe-bot-gate.mjs || true
+          echo "--- v4 only ---"; curl -4 -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(ip|colo)=' || true
+          FORCE_IPV4=1 QUICK=1 node harness/tests/probe-bot-gate.mjs || true
+          FORCE_IPV4=1 node harness/tests/probe-bot-gate.mjs
+
