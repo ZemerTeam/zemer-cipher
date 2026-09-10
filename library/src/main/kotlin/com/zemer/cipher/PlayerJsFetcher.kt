@@ -14,13 +14,16 @@ object PlayerJsFetcher {
     private const val CACHE_TTL_MS = 6 * 60 * 60 * 1000L // 6 hours
 
     /** STS of the currently cached player JS — must match what we send in API requests. */
-    @Volatile
-    var cachedSignatureTimestamp: Int? = null
-        private set
+    /** The STS extracted from one player, held with the hash it came from so the pair can never tear. */
+    private class Sts(val value: Int?, val hash: String)
 
-    /** The player hash [cachedSignatureTimestamp] was extracted from - the fast path's freshness key. */
+    // ONE volatile holder for both, read once per fast-path decision: two separate fields could be
+    // observed mid-update by a concurrent rememberSts (a new player's STS beside the old hash).
     @Volatile
-    private var cachedStsHash: String? = null
+    private var sts: Sts? = null
+
+    val cachedSignatureTimestamp: Int?
+        get() = sts?.value
 
     // One shared client for the whole library — see ZemerCipher.httpClient.
     private val httpClient: OkHttpClient
@@ -51,8 +54,9 @@ object PlayerJsFetcher {
                 val cached = readFromCache()
                 if (cached != null) {
                     Timber.tag(TAG).d("Using cached player JS (hash=${cached.second})")
-                    if (cachedSignatureTimestamp == null) {
-                        cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(cached.first, cached.second)
+                    val known = sts
+                    if (known?.value == null || known.hash != cached.second) {
+                        rememberSts(FunctionNameExtractor.extractSignatureTimestamp(cached.first, cached.second), cached.second)
                         Timber.tag(TAG).d("STS from cached player: $cachedSignatureTimestamp")
                     }
                     return@withContext cached
@@ -96,7 +100,8 @@ object PlayerJsFetcher {
      * fetch, so the STS can never lag the cached player.
      */
     suspend fun signatureTimestamp(): Int? = withContext(Dispatchers.IO) {
-        stsFastPath(cachedSignatureTimestamp, cachedStsHash, readCachedHash())?.let { return@withContext it }
+        val known = sts
+        stsFastPath(known?.value, known?.hash, readCachedHash())?.let { return@withContext it }
         getPlayerJs(forceRefresh = false) ?: return@withContext null
         cachedSignatureTimestamp
     }
@@ -105,9 +110,8 @@ object PlayerJsFetcher {
     internal fun stsFastPath(sts: Int?, stsHash: String?, cachedHash: String?): Int? =
         if (sts != null && stsHash != null && cachedHash == stsHash) sts else null
 
-    private fun rememberSts(sts: Int?, hash: String) {
-        cachedSignatureTimestamp = sts
-        cachedStsHash = hash
+    private fun rememberSts(value: Int?, hash: String) {
+        sts = Sts(value, hash)
     }
 
     fun invalidateCache() {
@@ -134,7 +138,14 @@ object PlayerJsFetcher {
     private fun readCachedHash(): String? {
         val hashFile = getHashFile()
         if (!hashFile.exists()) return null
-        return parseHashEntry(hashFile.readText(), System.currentTimeMillis(), CACHE_TTL_MS)
+        // A read failure (the file deleted by invalidateCache between exists() and here, or I/O) is a
+        // cache miss, never an exception out of the STS fast path.
+        return try {
+            parseHashEntry(hashFile.readText(), System.currentTimeMillis(), CACHE_TTL_MS)
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Error reading cached hash: ${e.message}")
+            null
+        }
     }
 
     /**
