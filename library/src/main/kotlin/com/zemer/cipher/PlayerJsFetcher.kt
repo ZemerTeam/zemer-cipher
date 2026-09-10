@@ -18,6 +18,10 @@ object PlayerJsFetcher {
     var cachedSignatureTimestamp: Int? = null
         private set
 
+    /** The player hash [cachedSignatureTimestamp] was extracted from - the fast path's freshness key. */
+    @Volatile
+    private var cachedStsHash: String? = null
+
     // One shared client for the whole library — see ZemerCipher.httpClient.
     private val httpClient: OkHttpClient
         get() = ZemerCipher.httpClient
@@ -73,7 +77,7 @@ object PlayerJsFetcher {
 
             // Cache the result
             writeToCache(hash, playerJs)
-            cachedSignatureTimestamp = FunctionNameExtractor.extractSignatureTimestamp(playerJs, hash)
+            rememberSts(FunctionNameExtractor.extractSignatureTimestamp(playerJs, hash), hash)
             Timber.tag(TAG).d("STS from fresh player ($hash): $cachedSignatureTimestamp")
 
             Pair(playerJs, hash)
@@ -81,6 +85,29 @@ object PlayerJsFetcher {
             Timber.tag(TAG).e(e, "getPlayerJs exception: ${e.message}")
             null
         }
+    }
+
+    /**
+     * The STS of the current cached player WITHOUT re-reading the player JS. [getPlayerJs] reads the whole
+     * cached base.js on every warm call (~2.8 MB as bytes, then again as a String), and the per-track STS
+     * lookup only ever needed the Int it had already extracted - on low-RAM devices that per-track 5+ MB
+     * allocation was an OutOfMemoryError site. The fast path trusts the cached Int only while the small hash
+     * file still names the same, unexpired player ([stsFastPath]); anything else falls through to the full
+     * fetch, so the STS can never lag the cached player.
+     */
+    suspend fun signatureTimestamp(): Int? = withContext(Dispatchers.IO) {
+        stsFastPath(cachedSignatureTimestamp, cachedStsHash, readCachedHash())?.let { return@withContext it }
+        getPlayerJs(forceRefresh = false) ?: return@withContext null
+        cachedSignatureTimestamp
+    }
+
+    /** Pure: the remembered STS is served only when it was extracted from the player the cache currently holds. */
+    internal fun stsFastPath(sts: Int?, stsHash: String?, cachedHash: String?): Int? =
+        if (sts != null && stsHash != null && cachedHash == stsHash) sts else null
+
+    private fun rememberSts(sts: Int?, hash: String) {
+        cachedSignatureTimestamp = sts
+        cachedStsHash = hash
     }
 
     fun invalidateCache() {
@@ -103,24 +130,33 @@ object PlayerJsFetcher {
         }
     }
 
+    /** The hash the small `current_hash.txt` names, or null when absent, malformed or past the TTL. */
+    private fun readCachedHash(): String? {
+        val hashFile = getHashFile()
+        if (!hashFile.exists()) return null
+        return parseHashEntry(hashFile.readText(), System.currentTimeMillis(), CACHE_TTL_MS)
+    }
+
+    /**
+     * Pure: `current_hash.txt` is `<hash>\n<written-at-ms>`; the entry is live only inside [ttlMs] of
+     * [now] (withinWindow: a future timestamp from a backward clock step counts as expired, not fresh).
+     */
+    internal fun parseHashEntry(text: String, now: Long, ttlMs: Long): String? {
+        val hashData = text.split("\n")
+        if (hashData.size < 2) return null
+        val hash = hashData[0]
+        if (hash.isBlank()) return null
+        val timestamp = hashData[1].toLongOrNull() ?: return null
+        if (!PlayerConfigStore.withinWindow(now, timestamp, ttlMs)) {
+            Timber.tag(TAG).d("Cache expired (hash=$hash)")
+            return null
+        }
+        return hash
+    }
+
     private fun readFromCache(): Pair<String, String>? {
         try {
-            val hashFile = getHashFile()
-            if (!hashFile.exists()) return null
-
-            val hashData = hashFile.readText().split("\n")
-            if (hashData.size < 2) return null
-
-            val hash = hashData[0]
-            val timestamp = hashData[1].toLongOrNull() ?: return null
-
-            // Check TTL (withinWindow: a future timestamp from a backward clock step counts
-            // as expired, not fresh).
-            if (!PlayerConfigStore.withinWindow(System.currentTimeMillis(), timestamp, CACHE_TTL_MS)) {
-                Timber.tag(TAG).d("Cache expired (hash=$hash)")
-                return null
-            }
-
+            val hash = readCachedHash() ?: return null
             val cacheFile = getCacheFile(hash)
             if (!cacheFile.exists()) return null
 

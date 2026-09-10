@@ -53,10 +53,7 @@ object CipherDeobfuscator {
      * can land on a different player generation, and a sig minted for one player deciphered
      * by another produces a URL the CDN 403s.
      */
-    suspend fun signatureTimestamp(): Int? {
-        PlayerJsFetcher.getPlayerJs(forceRefresh = false) ?: return null
-        return PlayerJsFetcher.cachedSignatureTimestamp
-    }
+    suspend fun signatureTimestamp(): Int? = PlayerJsFetcher.signatureTimestamp()
 
     /**
      * Best-effort: create the cipher WebView (fetch player JS + load it) ahead of first playback so
