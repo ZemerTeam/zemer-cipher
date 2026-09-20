@@ -1,0 +1,1100 @@
+name: Stream Client Monitor
+
+# The stream-client analog of player-monitor.yml. Devices fetch
+# library/src/main/assets/stream_clients.json from this repo at runtime (6 h TTL, or at once after a
+# total resolution failure), so a commit here IS the deploy. Every 30 minutes this drains EVERY
+# known client on the validation videos through the zemer-app harness — the table's live entries,
+# its benched entries, and every client the app retired — progressively AND over SABR, and acts on
+# what it proves:
+#
+#   live entry fails on every video, two runs in a row   -> BENCH it (`enabled: false`), auto-deploy
+#   benched entry drains whole songs, two runs in a row  -> UN-BENCH it, auto-deploy
+#   entry streams progressively but fails over SABR      -> bench its SABR capability
+#   (two runs in a row; the reverse un-benches it)          (`sabr.enabled: false`), auto-deploy
+#   retired client drains a whole song                   -> issue "works again" (a human re-adds)
+#   identity behind yt-dlp master (version/UA/os/device) -> BUMP it: the entry is copied into a
+#                                                           candidate table with yt-dlp's values, the
+#                                                           candidate must drain a whole song on EVERY
+#                                                           validation video, then it deploys; an
+#                                                           unverified drift only opens an issue
+#   no client at all drained a whole song                -> issue "scan inconclusive", NOTHING benched
+#                                                           (the runner/cookie/cipher are suspect, not
+#                                                           the table); a dead MAIN with healthy
+#                                                           fallbacks is reported as dead, never benched
+#
+# Same three-job credential split as the player monitor: scan holds no write token (it runs the
+# untrusted harness: player JS in jsdom, pot minting), alert holds only issues:write, deploy holds
+# the write token and only ever edits ONE line of the file per action (tools/clients/apply-bench.mjs,
+# provably minimal + re-parsed with the app's own rules), then reads the deploy back and reverts a
+# proven bad write. Deploy is OFF unless the repository variable AUTO_DEPLOY_CLIENTS is set:
+#   (unset) — scan, alert, plan; write nothing.                       <- default
+#   branch  — commit onto the branch the run was triggered from (burn-in on a feature branch)
+#   master  — commit straight to master (the live deploy)
+# CLIENT_HARNESS_REF (variable) pins which zemer-app ref supplies the harness (default main; set it
+# to the feature branch while the harness scripts are still only there).
+#
+# EGRESS: GitHub-hosted runners are bot-gated for anonymous InnerTube requests ("Sign in to confirm
+# you're not a bot" on every login-less client) — the runner's IP reputation, not the client
+# (probe-bot-gate.yml, 2026-09-02: every app-exact variant gated from the bare runner; all pass
+# through Cloudflare WARP). So the scan job's DEFAULT egress is WARP (free, no infrastructure):
+# SCAN_EGRESS variable = `warp` (default) | `proxy` (the SCAN_PROXY secret: a residential/mobile
+# http(s):// or socks5:// egress, routed by the harness itself) | `none` (bare runner — anonymous
+# clients come back `bot-gated`, INCONCLUSIVE: never a kill, never a bench).
+#
+# EGRESS SLOTS: the scan runs on eight runners at once (four x64, four ARM), each connecting WARP
+# with IPv6 pinned and PROVING its egress (an app-exact anonymous /player plus a CDN range) before
+# and after the drains; a colo that never passes (GATED_COLOS) gets one attempt, others three. The
+# verified slots are merged (tools/clients/merge-slots.mjs): a whole song from any clean slot proves
+# a client works, a definitive failure needs TWO clean slots agreeing, a slot whose egress flipped
+# mid-run contributes only its whole songs, a run with a single verified slot can never kill, and a
+# run with none re-dispatches itself on fresh runners (MAX_RUNNER_ATTEMPTS). Measured 2026-09-02:
+# 27 consecutive runs, every live client whole on both transports, 2-8 verified slots each.
+
+"on":
+  # Chained to the player monitor: every completed run of it (every ~20 min from master) triggers
+  # a client scan, rate-limited by the `gate` job to one drain per MIN_SCAN_INTERVAL_MINUTES
+  # (default 30). workflow_run only fires for workflows on
+  # the DEFAULT branch, so the chain (like the schedule) activates on merge.
+  workflow_run:
+    workflows: ["YouTube Player Monitor"]
+    types: [completed]
+  schedule:
+    # The floor when the chain is quiet (GitHub only runs `schedule` from the DEFAULT branch).
+    # Two consecutive failing runs are the bench quorum (the rate gate holds the 30-minute floor).
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      attempt:
+        description: 'Runner attempt (the egress re-dispatch counter; leave at 1)'
+        required: false
+        default: '1'
+  repository_dispatch:
+    types: [client-cron]
+  push:
+    # Exercise the pipeline on its own feature branch before merge (deploy inert until the variable
+    # is set; `branch` mode then commits back here, never to master).
+    branches: ['feat/remote-stream-clients']
+
+# Serialize: two overlapping runs must not both see "no open issue" and both open one, or both try
+# to bench the same entry. Queue, don't cancel, so an in-progress deploy finishes cleanly.
+concurrency:
+  group: stream-client-monitor
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  HARNESS_REPO: ZemerTeam/zemer-app
+  CONFIG_PATH: library/src/main/assets/stream_clients.json
+
+jobs:
+  # Rate gate for the chained trigger: a workflow_run / schedule run proceeds only if the last
+  # SUCCESSFUL scan of this workflow is older than MIN_SCAN_INTERVAL_MINUTES; a manual dispatch or
+  # a push to the feature branch always runs. actions:read only — no other permission.
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/clients
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # tools/clients/gate.mjs (tested): kill switch > manual/push always > chained/scheduled only
+      # when the last successful scan is older than MIN_SCAN_INTERVAL_MINUTES.
+      - name: Decide whether to scan
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          THIS_RUN: ${{ github.run_id }}
+          MIN_MINUTES: ${{ vars.MIN_SCAN_INTERVAL_MINUTES }}
+          MONITOR_ENABLED: ${{ vars.CLIENT_MONITOR_ENABLED }}
+        run: |
+          LAST=$(gh api "repos/$REPO/actions/workflows/client-monitor.yml/runs?status=success&per_page=10" \
+            --jq "[.workflow_runs[] | select(.id != ($THIS_RUN|tonumber)) | .updated_at] | first // empty" 2>/dev/null || true)
+          OUT=$(node tools/clients/gate.mjs "$EVENT" "${MONITOR_ENABLED:-}" "$LAST" "${MIN_MINUTES:-30}")
+          echo "$OUT"
+          echo "run=${OUT%% *}" >> "$GITHUB_OUTPUT"
+
+  # The pure decision + write rules (dead/revived classification, bench quorum, minimum live
+  # fallbacks, the one-line edit invariants) stand between a scan and every device's chain — run
+  # their tests FIRST and gate the pipeline on them. Node builtins only.
+  test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The scenario simulator parses with the zemer-app harness loader (node builtins only, no
+      # install): the same rules a device applies.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness-tests
+          sparse-checkout: tests
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run client tools unit tests
+        env:
+          HARNESS_DIR: ${{ github.workspace }}/harness-tests
+        run: node --test tools/clients/clients.test.mjs tools/clients/merge-slots.test.mjs tools/clients/simulate.test.mjs tools/clients/gate.test.mjs
+      # The harness's own unit tests (drain verdicts, the SABR session refresh, the loader parity
+      # rules): a harness regression fails HERE, before any slot drains with it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('harness-tests/tests/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - name: Run harness unit tests
+        env:
+          SABR_RETRY_MS: '1'
+        run: |
+          npm ci --prefix harness-tests/tests --prefer-offline --no-audit --no-fund
+          rm -rf harness-tests/cipher && ln -s "$GITHUB_WORKSPACE" harness-tests/cipher
+          node --test harness-tests/tests/*.test.mjs
+
+  # EGRESS SLOTS: the same scan on several runners AT ONCE. WARP's colo follows the runner's
+  # region and does not change when WARP re-registers (an IAD runner re-rolled six IAD addresses,
+  # all gated), so one runner is a coin flip - eight independent runners almost never all land on
+  # a gated colo. Each slot proves its own egress before a single drain; only verified slots drain
+  # and upload; `collect` takes the first verified result. Costs no wall-clock time.
+  scan:
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions: {}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two runner pools for region diversity: x64 and ARM hosted runners live in different
+        # Azure pools, so their WARP colos differ - more independent egress draws per run.
+        include:
+          - { slot: 1, runner: ubuntu-latest }
+          - { slot: 2, runner: ubuntu-latest }
+          - { slot: 3, runner: ubuntu-latest }
+          - { slot: 4, runner: ubuntu-latest }
+          - { slot: 5, runner: ubuntu-24.04-arm }
+          - { slot: 6, runner: ubuntu-24.04-arm }
+          # Two more ARM slots: over 14 runs the ARM pool verified 68% of its slots against 55% for
+          # x64 (it lands on DFW/LAX/ORD more, on IAD/MSP less), and a refused slot costs ~2 min.
+          - { slot: 7, runner: ubuntu-24.04-arm }
+          - { slot: 8, runner: ubuntu-24.04-arm }
+    steps:
+      - name: Checkout zemer-cipher
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The drain is the zemer-app harness (tests/scan-stream-clients.mjs) — the SAME check a human
+      # runs with client-fulldownload.mjs, deliberately not copied here. zemer-app is public.
+      - name: Checkout validation harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Residential-grade egress for the drains (see EGRESS above). WARP is connected only around
+      # the drain steps and disconnected before the artifact upload.
+      # npm cache keyed on the harness lockfile: ~15 s per slot saved on a warm cache.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('harness/tests/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: Install harness dependencies
+        run: |
+          npm ci --prefix harness/tests --prefer-offline --no-audit --no-fund
+          # The harness is written for the zemer-app layout, where the cipher submodule sits at
+          # ../cipher relative to tests/ (player_configs.json for the cipher, stream_clients.json for
+          # the loader). This checkout IS that repo, so point the expected path at the workspace
+          # rather than fork the path logic.
+          # (The sparse checkout materializes the app's `cipher` submodule as an EMPTY directory, so
+          # a bare `ln -s` would land INSIDE it — remove the placeholder first.)
+          rm -rf harness/cipher && ln -s "$GITHUB_WORKSPACE" harness/cipher
+          test -f harness/cipher/library/src/main/assets/player_configs.json
+
+      # Residential-grade egress for the drains (see EGRESS above). WARP's egress IP varies by colo
+      # and some pools are gated too (measured: ORD passed, IAD gated), so the egress is VERIFIED
+      # with one app-exact anonymous /player (probe-bot-gate QUICK) and re-rolled - new
+      # registration, alternating tunnel protocol - until it passes or the attempts run out. WARP
+      # is disconnected again before the artifact upload.
+      - name: Connect WARP egress (verified, re-rolled until the bot gate lifts)
+        id: egress
+        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        # A slot must never hold the run: one slot sat 20 minutes in apt (the runner's background
+        # apt held the lock, 2026-09-02) while the other seven had long finished. Past this, the
+        # slot fails like a refused egress and the verified slots carry the run.
+        timeout-minutes: 8
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          STREAM_CLIENTS_JSON: ${{ github.workspace }}/library/src/main/assets/stream_clients.json
+          EGRESS_ATTEMPTS: ${{ vars.EGRESS_ATTEMPTS }}
+          # Colos whose WARP pool never passed after a failed first attempt (IAD 0/7, MSP 0/7 over
+          # six runs, 2026-09-02) - a slot there stops after one attempt instead of burning ~40 s.
+          GATED_COLOS: ${{ vars.GATED_COLOS || 'IAD MSP' }}
+        run: |
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list >/dev/null
+          # Bounded apt: at most 100 s per command and 60 s for the dpkg lock, three tries (a slot
+          # still hit the 8-minute step cap inside apt on 2026-09-02; the cap bounded it).
+          for try in 1 2 3; do
+            sudo timeout 100 apt-get -o DPkg::Lock::Timeout=60 update -qq && sudo timeout 100 apt-get -o DPkg::Lock::Timeout=60 install -y -qq cloudflare-warp >/dev/null && break
+            echo "::warning::apt try $try failed (lock held or repo slow) - retrying"; sleep 15
+          done
+          command -v warp-cli >/dev/null || { echo "::warning::cloudflare-warp did not install - slot refused"; echo "verified=false" >> "$GITHUB_OUTPUT"; exit 0; }
+          # IPv6 ONLY on WARP, for the probes and the drains alike: WARP's v6 pool passes the gate and
+          # the CDN, its shared v4 pool does not (probe: UNPLAYABLE; a slot that verified over v4
+          # then went partial/bot-gated mid-run). FORCE_IPV6 reaches every later harness step.
+          echo "FORCE_IPV6=1" >> "$GITHUB_ENV"
+          export FORCE_IPV6=1
+          ok=""
+          # Re-registering never changes the colo, but within a colo that passes at all a re-roll
+          # rescued 3 of ~10 failed first attempts (SJC, ORD, SEA), so three attempts there; a colo
+          # in GATED_COLOS gets one. The cross-runner re-dispatch below is what actually moves colo.
+          for attempt in $(seq 1 "${EGRESS_ATTEMPTS:-3}"); do
+            warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
+            warp-cli --accept-tos registration delete >/dev/null 2>&1 || true
+            warp-cli --accept-tos registration new >/dev/null
+            warp-cli --accept-tos mode warp >/dev/null
+            if [ $((attempt % 2)) -eq 0 ]; then warp-cli --accept-tos tunnel protocol set MASQUE >/dev/null 2>&1 || true; else warp-cli --accept-tos tunnel protocol set WireGuard >/dev/null 2>&1 || true; fi
+            warp-cli --accept-tos connect >/dev/null
+            for i in $(seq 1 20); do warp-cli --accept-tos status | grep -q Connected && break; sleep 2; done
+            # The v6 route can lag the "Connected" state by a few seconds (a slot lost both attempts
+            # to an empty trace, 2026-09-02): poll the trace before spending the attempt.
+            TRACE=""
+            for i in 1 2 3 4; do
+              TRACE=$(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|colo|ip)=' | tr '\n' ' ')
+              case "$TRACE" in *"ip=2"*|*"ip=3"*) break ;; esac
+              sleep 5
+            done
+            case "$TRACE" in *"ip=2"*|*"ip=3"*) ;; *) echo "::warning::no IPv6 egress on this attempt ($TRACE; $(warp-cli --accept-tos status 2>&1 | tr '\n' ' ' | cut -c1-160))"; continue ;; esac
+            # IPv6 egress on purpose: WARP's shared IPv4 pool answered UNPLAYABLE where the same
+            # colo's v6 passed (probe 2026-09-02, SJC), so v4 is never tried here.
+            # Clean AND stable: youtube.com reachable, then two app-exact anonymous /player probes
+            # a few seconds apart (a fresh tunnel that flaps or is still settling fails here, not
+            # in the middle of the drains).
+            if curl -6 -s --max-time 20 -o /dev/null https://www.youtube.com/iframe_api \
+               && QUICK=1 node harness/tests/probe-bot-gate.mjs && sleep 5 && QUICK=1 node harness/tests/probe-bot-gate.mjs; then
+              echo "egress attempt $attempt OK: $TRACE"; ok=1; break
+            fi
+            echo "::warning::egress attempt $attempt not clean/stable ($TRACE) - re-rolling"
+            COLO=$(echo "$TRACE" | grep -o 'colo=[A-Z]*' | cut -d= -f2)
+            if [ -n "$COLO" ] && echo " $GATED_COLOS " | grep -q " $COLO "; then echo "::notice::colo $COLO is in GATED_COLOS - no re-roll on this runner"; break; fi
+          done
+          if [ -z "$ok" ]; then
+            echo "::warning::no WARP egress passed the bot gate on this runner"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "verified=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A runner whose egress never verified must NOT scan (its anonymous verdicts would be the
+      # runner's, not the clients'): fail here, and the `redispatch` job below re-runs the whole
+      # workflow on a FRESH runner (a different Azure region lands on a different WARP colo), up to
+      # MAX_RUNNER_ATTEMPTS (default 4) times. A bot-gated verdict is never accepted by design.
+      - name: Refuse to scan from a gated runner
+        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' && steps.egress.outputs.verified != 'true' }}
+        env:
+          SLOT: ${{ matrix.slot }}
+        run: |
+          echo "::warning::slot $SLOT: egress not verified on this runner - this slot drains nothing"
+          exit 1
+
+      # Whole-song drains of every known client on every validation video, against THIS repo's table
+      # (STREAM_CLIENTS_JSON points the loader at the checked-out file, so a branch run scans the
+      # branch's table). The cookie makes login-required clients conclusive and lifts the datacenter
+      # bot gate; without it those clients are skipped (inconclusive, never dead). Non-zero exit
+      # means the committed table itself is invalid — devices would reject it, so red is correct.
+      - name: Drain every known client
+        id: scan
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
+          SCAN_PROXY: ${{ (vars.SCAN_EGRESS || 'warp') == 'proxy' && secrets.SCAN_PROXY || '' }}
+          # Two gated videos (a retired client 403s at 0 KB on both, 2026-09-02): a client must be
+          # whole on every video to count as working and fail on every video to count as dead, and
+          # one video being pulled or region-locked cannot blind the monitor.
+          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS || 'JTF9fLJvniI,kJQP7kiw5Fk' }}
+          # The retired clients feed only the "works again" alert: slot 1 covers them, the other
+          # slots drain the table alone (the two transports already run concurrently inside).
+          # The retired clients (the "works again" alert) drain on one x64 and one ARM slot: a single
+          # slot is refused about half the time, two independent ones almost never both.
+          SKIP_RETIRED: ${{ (matrix.slot == 1 || matrix.slot == 5) && '0' || '1' }}
+          # Both transports drain at once. Measured 2026-09-02 over six runs (odd slots sequential,
+          # even concurrent): SABR whole 34/36 concurrent vs 28/30 sequential, every miss a slot
+          # whose egress flipped mid-run (postcheck=false) - the mode made no difference, so the
+          # faster one stays. The harness's SABR session refresh covers the mid-drain 403s that
+          # motivated the A/B.
+          SCAN_PASSES: concurrent
+        run: |
+          STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
+            node harness/tests/scan-stream-clients.mjs > /tmp/scan.json 2> /tmp/scan.log \
+            || { echo "::error::scan failed"; cat /tmp/scan.log; exit 1; }
+          cat /tmp/scan.log
+
+      # The table mirrors yt-dlp master's client identity (clientVersion, userAgent, os/device
+      # fields) per entry (`mirrors`). Drift is never a kill signal by itself — a stale version
+      # keeps draining until YouTube retires it — but it IS auto-bumped once proven: below, each
+      # drifted entry is written into a CANDIDATE table (apply-bump --out, the same one-entry edit
+      # deploy will make) and the candidate is drained on every validation video. A fetch failure
+      # must not fail the scan.
+      - name: Compare client identity with yt-dlp master
+        continue-on-error: true
+        run: |
+          echo '[]' > /tmp/bumps.json
+          STREAM_CLIENTS_JSON="$GITHUB_WORKSPACE/$CONFIG_PATH" \
+            node harness/tests/scan-client-versions.mjs > /tmp/drift.json || echo '{"drift":[]}' > /tmp/drift.json
+
+      # Only an all-whole-song candidate (every validation video, not one bot-gated or errored
+      # result) is a verified bump. The verdicts are recorded per entry so the alert can say WHY a
+      # drift was not bumped (bot-gated runner, partial drain, ...).
+      - name: Propose and verify identity bumps
+        if: ${{ matrix.slot <= 2 }}
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          YT_DATASYNC_ID: ${{ secrets.YT_DATASYNC_ID }}
+          SCAN_PROXY: ${{ (vars.SCAN_EGRESS || 'warp') == 'proxy' && secrets.SCAN_PROXY || '' }}
+          VALIDATION_VIDEO_IDS: ${{ vars.VALIDATION_VIDEO_IDS || 'JTF9fLJvniI,kJQP7kiw5Fk' }}
+        run: |
+          mkdir -p /tmp/cand
+          echo '[]' > /tmp/bumps.json
+          for KEY in $(node -e "const d=JSON.parse(require('fs').readFileSync('/tmp/drift.json','utf8'));process.stdout.write((d.drift||[]).map(x=>x.key).join(' '))"); do
+            echo "::group::candidate $KEY"
+            FIELDS=$(node -e "const d=JSON.parse(require('fs').readFileSync('/tmp/drift.json','utf8'));process.stdout.write(JSON.stringify(d.drift.find(x=>x.key==='$KEY').fields))")
+            echo "fields: $FIELDS"
+            if ! node tools/clients/apply-bump.mjs --config "$CONFIG_PATH" --key "$KEY" --fields "$FIELDS" --harness harness --out "/tmp/cand/$KEY.json"; then
+              echo "::warning::$KEY: candidate refused by apply-bump"; echo "::endgroup::"; continue
+            fi
+            STREAM_CLIENTS_JSON="/tmp/cand/$KEY.json" ONLY_KEYS="$KEY" \
+              node harness/tests/scan-stream-clients.mjs > "/tmp/cand/$KEY.scan.json" 2> "/tmp/cand/$KEY.scan.log" || true
+            cat "/tmp/cand/$KEY.scan.log"
+            node -e '
+              const fs = require("fs");
+              const key = process.argv[1], fields = JSON.parse(process.argv[2]);
+              let scan; try { scan = JSON.parse(fs.readFileSync(`/tmp/cand/${key}.scan.json`, "utf8")); } catch { scan = null; }
+              const entry = scan?.clients?.find((c) => c.key === key);
+              const results = entry?.results || [];
+              const sabrResults = entry?.sabr === "live" ? (entry.sabrResults || []) : [];
+              // Progressive whole on every video, AND SABR whole on every video when the entry
+              // carries a live SABR capability - a bump must keep both transports working.
+              const whole = results.length > 0 && results.every((r) => r.kind === "whole") &&
+                (entry?.sabr !== "live" || (sabrResults.length > 0 && sabrResults.every((r) => r.kind === "whole")));
+              const drift = JSON.parse(fs.readFileSync("/tmp/drift.json", "utf8"));
+              const row = drift.drift.find((d) => d.key === key);
+              row.verify = whole ? "verified" : ([...results.map((r) => `${r.video}: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`), ...sabrResults.map((r) => `${r.video} SABR: ${r.kind}${r.reason ? " (" + r.reason + ")" : ""}`)].join("; ") || "no result");
+              fs.writeFileSync("/tmp/drift.json", JSON.stringify(drift, null, 2));
+              if (whole) {
+                const bumps = JSON.parse(fs.readFileSync("/tmp/bumps.json", "utf8"));
+                bumps.push({ key, fields, changes: row.changes });
+                fs.writeFileSync("/tmp/bumps.json", JSON.stringify(bumps, null, 2));
+                console.log(`${key}: candidate drained whole songs on every video - VERIFIED bump`);
+              } else {
+                console.log(`::warning::${key}: candidate NOT verified - ${row.verify}`);
+              }
+            ' "$KEY" "$FIELDS"
+            echo "::endgroup::"
+          done
+          echo "verified bumps: $(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/bumps.json','utf8')).map(b=>b.key).join(' ')||'none')")"
+
+      # The egress must still be clean AFTER the drains (a tunnel that flipped mid-run would have
+      # produced the runner's verdicts, not the clients'): re-verify, and if it fails this slot
+      # uploads nothing - collect never sees it.
+      - name: Re-verify the egress after the drains
+        id: postcheck
+        if: ${{ (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        env:
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
+          STREAM_CLIENTS_JSON: ${{ github.workspace }}/library/src/main/assets/stream_clients.json
+        run: |
+          # A slot whose egress is no longer clean AFTER the drains is only PARTIALLY trusted: its
+          # whole songs are real evidence (they happened), its failures may be the tunnel's. The
+          # flag rides in scan.json; merge-slots keeps only the whole verdicts of such a slot.
+          # One retry after a pause: a CDN range right after a drain burst can be throttled for a
+          # moment without the egress having flipped - demoting a slot on that alone would starve a
+          # real kill of the two agreeing clean egresses it needs.
+          if QUICK=1 node harness/tests/probe-bot-gate.mjs || { sleep 15; QUICK=1 node harness/tests/probe-bot-gate.mjs; }; then
+            node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/scan.json","utf8"));s.postcheckClean=true;fs.writeFileSync("/tmp/scan.json",JSON.stringify(s,null,2))'
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::slot ${{ matrix.slot }}: egress NOT clean after the drains - only this slot's whole songs will count"
+            node -e 'const fs=require("fs");const s=JSON.parse(fs.readFileSync("/tmp/scan.json","utf8"));s.postcheckClean=false;fs.writeFileSync("/tmp/scan.json",JSON.stringify(s,null,2))'
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record the egress this slot drained through
+        run: |
+          echo "slot=${{ matrix.slot }} runner=${{ matrix.runner }} passes=concurrent egress=warp ipv6=${FORCE_IPV6:-0} postcheck=${{ steps.postcheck.outputs.clean || 'n/a' }} $(curl -6 -s --max-time 15 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(colo|ip)=' | tr '\n' ' ')" > /tmp/egress.txt
+          cat /tmp/egress.txt
+
+      - name: Disconnect WARP egress
+        if: ${{ always() && (vars.SCAN_EGRESS || 'warp') == 'warp' }}
+        continue-on-error: true
+        run: warp-cli --accept-tos disconnect >/dev/null 2>&1 || true
+
+      - name: Upload this slot's results
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-scan-slot-${{ matrix.slot }}
+          path: |
+            /tmp/scan.json
+            /tmp/drift.json
+            /tmp/bumps.json
+            /tmp/scan.log
+            /tmp/egress.txt
+          retention-days: 14
+
+  # Take the first slot whose egress verified (its artifact exists), publish it as `client-scan`
+  # for the alert/deploy/notify jobs, and run the pre-plan on it.
+  collect:
+    needs: [gate, scan]
+    if: always() && needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      egress_verified: ${{ steps.pick.outputs.verified }}
+      slot: ${{ steps.pick.outputs.slot }}
+      action_count: ${{ steps.preplan.outputs.action_count }}
+      summary: ${{ steps.preplan.outputs.summary }}
+      conclusive: ${{ steps.preplan.outputs.conclusive }}
+      healthy: ${{ steps.preplan.outputs.healthy }}
+      sabr_healthy: ${{ steps.preplan.outputs.sabr_healthy }}
+    steps:
+      - name: Checkout zemer-cipher
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: client-scan-slot-*
+          path: /tmp/slots
+      # Every slot whose egress verified before AND after is legitimate evidence: MERGE them
+      # (tools/clients/merge-slots.mjs) - a whole song from any clean egress proves a client works,
+      # a failure counts only when at least two clean egresses agree and none drained it whole, so
+      # a false death needs two independent egresses to be wrong at once and a run with a single
+      # verified slot can never kill. drift/bumps come from the first verified slot.
+      - name: Merge the verified slots
+        id: pick
+        run: |
+          ls -d /tmp/slots/client-scan-slot-* 2>/dev/null || true
+          FILES=""; FIRST=""
+          for d in $(ls -d /tmp/slots/client-scan-slot-* 2>/dev/null | sort); do
+            [ -s "$d/scan.json" ] || continue
+            FILES="$FILES $d/scan.json"; [ -n "$FIRST" ] || FIRST="$d"
+          done
+          if [ -z "$FIRST" ]; then
+            echo "::error::no slot verified its egress - nothing scanned this run"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          node tools/clients/merge-slots.mjs $FILES > /tmp/scan.json
+          cp "$FIRST"/drift.json /tmp/ 2>/dev/null || true
+          # Verified bumps come from whichever slot verified them (slots 1-2 propose; either may be
+          # the one whose egress held): union by key, so a bump verified in slot 2 is never lost
+          # behind slot 1's empty list.
+          node -e '
+            const fs = require("fs"); const seen = new Map();
+            for (const d of fs.readdirSync("/tmp/slots").map((n) => "/tmp/slots/" + n).sort()) {
+              try { for (const b of JSON.parse(fs.readFileSync(d + "/bumps.json", "utf8"))) if (!seen.has(b.key)) seen.set(b.key, b); } catch {}
+            }
+            fs.writeFileSync("/tmp/bumps.json", JSON.stringify([...seen.values()], null, 2));
+            console.log("verified bumps across slots:", [...seen.keys()].join(" ") || "none");
+          '
+          : > /tmp/scan.log; : > /tmp/egress.txt
+          for d in $(ls -d /tmp/slots/client-scan-slot-* 2>/dev/null | sort); do
+            [ -s "$d/scan.json" ] || continue
+            cat "$d/egress.txt" >> /tmp/egress.txt; echo "=== $(cat "$d/egress.txt")" >> /tmp/scan.log; cat "$d/scan.log" >> /tmp/scan.log
+          done
+          echo "merged $(echo $FILES | wc -w) verified slot(s):"; cat /tmp/egress.txt
+          echo "verified=true" >> "$GITHUB_OUTPUT"; echo "slot=$(tr '\n' ';' < /tmp/egress.txt)" >> "$GITHUB_OUTPUT"
+
+      # A first pass with no issue history: decides whether ANYTHING needs the alert job at all
+      # (dead / revived / resurrected / drift / bumps / inconclusive). The bench quorum needs the
+      # open-issue history, which only the alert job (issues:read) can see, so the real plan runs there.
+      - name: Pre-plan (is there anything to act on?)
+        id: preplan
+        run: node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json --bumps /tmp/bumps.json
+
+      - name: Publish the chosen scan
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-scan
+          path: |
+            /tmp/scan.json
+            /tmp/drift.json
+            /tmp/bumps.json
+            /tmp/scan.log
+            /tmp/egress.txt
+          retention-days: 14
+
+  # Runner roulette: when the scan job refused to run on a gated egress, dispatch the workflow
+  # again with attempt+1 - a fresh runner, a different colo. Bounded by MAX_RUNNER_ATTEMPTS.
+  redispatch:
+    needs: [gate, collect]
+    if: >-
+      always() && needs.gate.outputs.run == 'true' &&
+      needs.collect.outputs.egress_verified != 'true' &&
+      (vars.SCAN_EGRESS || 'warp') == 'warp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Re-dispatch on a fresh runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          ATTEMPT: ${{ github.event.inputs.attempt || '1' }}
+          MAX: ${{ vars.MAX_RUNNER_ATTEMPTS }}
+        run: |
+          NEXT=$((ATTEMPT + 1))
+          if [ "$NEXT" -gt "${MAX:-4}" ]; then
+            echo "::error::no verified egress across ${ATTEMPT} runner sets - giving up this cycle (next schedule retries)"
+            exit 1
+          fi
+          echo "re-dispatching client-monitor on $REF as attempt $NEXT"
+          gh workflow run client-monitor.yml --repo "$REPO" --ref "$REF" -f attempt="$NEXT"
+
+  # Issues are the pipeline's MEMORY: a "failing" issue open from a previous run is what promotes a
+  # dead client to a bench (and a "revived" issue to an un-bench) — one bad scan can never write.
+  alert:
+    needs: collect
+    if: needs.collect.result == 'success' && needs.collect.outputs.action_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    outputs:
+      bench: ${{ steps.plan.outputs.bench }}
+      unbench: ${{ steps.plan.outputs.unbench }}
+      sabr_bench: ${{ steps.plan.outputs.sabr_bench }}
+      sabr_unbench: ${{ steps.plan.outputs.sabr_unbench }}
+      sabr_healthy: ${{ steps.plan.outputs.sabr_healthy }}
+      dead: ${{ steps.plan.outputs.dead }}
+      healthy: ${{ steps.plan.outputs.healthy }}
+      revived: ${{ steps.plan.outputs.revived }}
+      resurrected: ${{ steps.plan.outputs.resurrected }}
+      drift: ${{ steps.plan.outputs.drift }}
+      bump_keys: ${{ steps.plan.outputs.bump_keys }}
+      refused: ${{ steps.plan.outputs.refused }}
+      conclusive: ${{ steps.plan.outputs.conclusive }}
+      summary: ${{ steps.plan.outputs.summary }}
+    env:
+      GMAIL_USER: ${{ secrets.GMAIL_USERNAME }}
+    steps:
+      - name: Checkout zemer-cipher
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-scan
+          path: /tmp
+
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      # Which clients were ALREADY flagged by an older run: an open "failing"/"revived" issue at
+      # least MIN_FLAG_AGE_MINUTES old (default 30 — a manual re-run minutes after the first must not
+      # count as the second consecutive sighting). Dedup is by exact title across ALL open issues.
+      - name: Read the open detection issues
+        id: flagged
+        uses: actions/github-script@v7
+        env:
+          MIN_FLAG_AGE_MINUTES: ${{ vars.MIN_FLAG_AGE_MINUTES }}
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const { pathToFileURL } = require('url');
+            const { ISSUE_TITLE_RE, REVIVED_TITLE_RE, SABR_ISSUE_TITLE_RE, SABR_REVIVED_TITLE_RE } = await import(pathToFileURL(`${process.env.GITHUB_WORKSPACE}/tools/clients/decide.mjs`).href);
+            const minAgeMs = Number(process.env.MIN_FLAG_AGE_MINUTES || 30) * 60 * 1000;
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
+            });
+            const aged = open.filter((i) => Date.now() - new Date(i.created_at).getTime() >= minAgeMs);
+            const pick = (re, list) => list.map((i) => (i.title.match(re) || [])[1]).filter(Boolean);
+            const failing = pick(ISSUE_TITLE_RE, aged);
+            const revived = pick(REVIVED_TITLE_RE, aged);
+            core.setOutput('failing', failing.join(' '));
+            core.setOutput('revived', revived.join(' '));
+            core.setOutput('sabr_failing', pick(SABR_ISSUE_TITLE_RE, aged).join(' '));
+            core.setOutput('sabr_revived', pick(SABR_REVIVED_TITLE_RE, aged).join(' '));
+            core.setOutput('open_titles', JSON.stringify(open.map((i) => [i.number, i.title])));
+            console.log(`previously flagged failing: ${failing.join(' ') || '-'}; revived: ${revived.join(' ') || '-'}`);
+
+      - name: Plan
+        id: plan
+        env:
+          MIN_LIVE_FALLBACKS: ${{ vars.MIN_LIVE_FALLBACKS }}
+          FLAGGED: ${{ steps.flagged.outputs.failing }}
+          FLAGGED_REVIVED: ${{ steps.flagged.outputs.revived }}
+          FLAGGED_SABR: ${{ steps.flagged.outputs.sabr_failing }}
+          FLAGGED_SABR_REVIVED: ${{ steps.flagged.outputs.sabr_revived }}
+        run: |
+          node tools/clients/plan.mjs --scan /tmp/scan.json --drift /tmp/drift.json --bumps /tmp/bumps.json \
+            --flagged "$FLAGGED" --flagged-revived "$FLAGGED_REVIVED" \
+            --flagged-sabr "$FLAGGED_SABR" --flagged-sabr-revived "$FLAGGED_SABR_REVIVED" | tee /tmp/plan.json
+
+      # Issue bookkeeping lives in tools/clients/issues.cjs (titles from decide.mjs). Two steps,
+      # two tokens: NEW issues are opened as the Zemer-Dude App (bot avatar); COMMENTS on existing
+      # ones use the built-in GITHUB_TOKEN — the App token is not granted comment/close ('Resource
+      # not accessible by integration'), which once failed the benching run's alert job. Neither
+      # step may block the deploy: the plan is already made, the issues are bookkeeping.
+      - name: Open new detection issues (as the bot)
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          MODE: create
+          OPEN_TITLES: ${{ steps.flagged.outputs.open_titles }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/tools/clients/issues.cjs`);
+            await sync({ github, context, core, mode: process.env.MODE });
+
+      - name: Update existing detection issues
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          MODE: comment
+          OPEN_TITLES: ${{ steps.flagged.outputs.open_titles }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/tools/clients/issues.cjs`);
+            await sync({ github, context, core, mode: process.env.MODE });
+
+      - name: Send email notification
+        if: ${{ !cancelled() && env.GMAIL_USER != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "Stream client monitor: action needed"
+          to: dietdroidwp@gmail.com
+          from: Zemer CI <${{ secrets.GMAIL_USERNAME }}>
+          body: |
+            ${{ steps.plan.outputs.summary }}
+
+            Benching now:    ${{ steps.plan.outputs.bench }}
+            Un-benching now: ${{ steps.plan.outputs.unbench }}
+            Bumping now:     ${{ steps.plan.outputs.bump_keys }}
+            Refused:         ${{ steps.plan.outputs.refused }}
+            Deploy mode:     ${{ vars.AUTO_DEPLOY_CLIENTS }}
+
+            Issues: https://github.com/${{ github.repository }}/issues
+
+  deploy:
+    needs: [collect, alert]
+    if: >-
+      (needs.alert.outputs.bench != '' || needs.alert.outputs.unbench != '' || needs.alert.outputs.bump_keys != '' ||
+       needs.alert.outputs.sabr_bench != '' || needs.alert.outputs.sabr_unbench != '') &&
+      (vars.AUTO_DEPLOY_CLIENTS == 'branch' || vars.AUTO_DEPLOY_CLIENTS == 'master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      applied: ${{ steps.apply.outputs.applied }}
+      target: ${{ steps.branch.outputs.target }}
+      sha: ${{ steps.push.outputs.sha }}
+      verified: ${{ steps.verify.outputs.verified }}
+    steps:
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      # persist-credentials:false keeps the write token out of .git/config while ./gradlew runs
+      # third-party plugins in this job; the token is supplied only at the final push/readback.
+      - name: Checkout deploy target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.AUTO_DEPLOY_CLIENTS == 'master' && 'master' || github.ref_name }}
+          token: ${{ steps.bot.outputs.token }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Refuse to write to master in branch mode
+        if: vars.AUTO_DEPLOY_CLIENTS == 'branch' && github.ref_name == 'master'
+        run: |
+          echo "::error::AUTO_DEPLOY_CLIENTS=branch but this run was triggered from master — refusing to write"
+          exit 1
+
+      # Only the loader (node builtins) is imported here — no npm install in the token-holding job.
+      - name: Checkout validation harness
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HARNESS_REPO }}
+          ref: ${{ vars.CLIENT_HARNESS_REF || 'main' }}
+          path: harness
+          sparse-checkout: tests
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: client-scan
+          path: /tmp
+
+      - name: Configure commit identity
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          APP_SLUG: ${{ steps.bot.outputs.app-slug }}
+        run: |
+          if [ -z "$APP_SLUG" ]; then
+            echo "::error::no Zemer-Dude App token — refusing to commit under any other identity"
+            exit 1
+          fi
+          uid="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "Zemer-Dude"
+          git config user.email "${uid}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+      - name: Resolve deploy target
+        id: branch
+        run: |
+          TARGET="${{ vars.AUTO_DEPLOY_CLIENTS == 'master' && 'master' || github.ref_name }}"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "committing to '$TARGET' (base $(git rev-parse --short HEAD))"
+
+      # One commit per action, each a ONE-LINE edit re-parsed with the app's rules (apply-bench.mjs
+      # refuses anything else: the main client, a chain below the minimum live fallbacks, a second
+      # changed line). [skip ci] is load-bearing: App-token pushes re-trigger workflows.
+      - name: Apply benches and un-benches
+        id: apply
+        env:
+          BENCH: ${{ needs.alert.outputs.bench }}
+          UNBENCH: ${{ needs.alert.outputs.unbench }}
+          SABR_BENCH: ${{ needs.alert.outputs.sabr_bench }}
+          SABR_UNBENCH: ${{ needs.alert.outputs.sabr_unbench }}
+          # The same floor plan.mjs applied — the writer re-checks it and must agree.
+          MIN_LIVE_FALLBACKS: ${{ vars.MIN_LIVE_FALLBACKS }}
+        run: |
+          noop() { echo "$1" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(String(JSON.parse(s).noop)))"; }
+          APPLIED=""
+          for KEY in $BENCH; do
+            echo "::group::bench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness) || { echo "$OUT"; echo "::error::bench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY already benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): bench $KEY - failed the whole-song drain on consecutive scans [skip ci]"
+            APPLIED="$APPLIED bench:$KEY"
+            echo "::endgroup::"
+          done
+          for KEY in $UNBENCH; do
+            echo "::group::un-bench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness --unbench) || { echo "$OUT"; echo "::error::un-bench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY not benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): un-bench $KEY - drains whole songs again on consecutive scans [skip ci]"
+            APPLIED="$APPLIED unbench:$KEY"
+            echo "::endgroup::"
+          done
+          # SABR capability benches / un-benches: `sabr.enabled` only, the entry stays in the chain.
+          for KEY in $SABR_BENCH; do
+            echo "::group::sabr-bench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness --sabr) || { echo "$OUT"; echo "::error::sabr-bench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY SABR already benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): bench the SABR capability of $KEY - failed the SABR whole-song drain on consecutive scans [skip ci]"
+            APPLIED="$APPLIED sabr-bench:$KEY"
+            echo "::endgroup::"
+          done
+          for KEY in $SABR_UNBENCH; do
+            echo "::group::sabr-unbench $KEY"
+            OUT=$(node tools/clients/apply-bench.mjs --config "$CONFIG_PATH" --key "$KEY" --harness harness --sabr --unbench) || { echo "$OUT"; echo "::error::sabr-unbench $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY SABR not benched — nothing to do"; echo "::endgroup::"; continue; fi
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): un-bench the SABR capability of $KEY - drains whole songs over SABR again [skip ci]"
+            APPLIED="$APPLIED sabr-unbench:$KEY"
+            echo "::endgroup::"
+          done
+          # Identity bumps: each was verified in the scan job (candidate drained whole songs on
+          # every validation video); apply-bump re-checks the one-entry invariants on write.
+          for KEY in $(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/bumps.json','utf8')).map(b=>b.key).join(' '))"); do
+            echo "::group::bump $KEY"
+            FIELDS=$(node -e "process.stdout.write(JSON.stringify(JSON.parse(require('fs').readFileSync('/tmp/bumps.json','utf8')).find(b=>b.key==='$KEY').fields))")
+            OUT=$(node tools/clients/apply-bump.mjs --config "$CONFIG_PATH" --key "$KEY" --fields "$FIELDS" --harness harness) || { echo "$OUT"; echo "::error::bump $KEY refused"; exit 1; }
+            echo "$OUT"
+            if [ "$(noop "$OUT")" = "true" ]; then echo "$KEY already at yt-dlp's values — nothing to do"; echo "::endgroup::"; continue; fi
+            SUMMARY=$(echo "$OUT" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const c=JSON.parse(s).changes;process.stdout.write(Object.entries(c).map(([f,x])=>f+' '+x.from+' -> '+x.to).join(', '))})")
+            git add "$CONFIG_PATH"
+            git commit -m "config(clients): bump $KEY to yt-dlp master ($SUMMARY) [skip ci]"
+            APPLIED="$APPLIED bump:$KEY"
+            echo "::endgroup::"
+          done
+          echo "applied=$(echo $APPLIED | xargs)" >> "$GITHUB_OUTPUT"
+
+      # The app's real parser on the exact bytes about to be pushed (StreamClientsBundledAssetTest
+      # accepts a benched entry but refuses a reorder, an addition or a benched main).
+      - name: Parser parity gate
+        if: steps.apply.outputs.applied != ''
+        run: ./gradlew --no-daemon :library:test
+
+      - name: Push
+        id: push
+        if: steps.apply.outputs.applied != ''
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+        run: |
+          # The target may have moved since checkout (a human push, another bot). The deploy commits
+          # are one-line table edits, so rebase them onto the new tip and retry; a rebase CONFLICT
+          # (someone edited the same entry) aborts with nothing pushed - the next run re-plans.
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          for attempt in 1 2 3 4; do
+            if git push "$REMOTE" "HEAD:${TARGET}" 2>/tmp/push.err; then
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "::warning::push attempt $attempt rejected: $(head -c 200 /tmp/push.err) - rebasing onto the moved ${TARGET}"
+            git fetch --no-tags "$REMOTE" "$TARGET" || { sleep 5; continue; }
+            if ! git rebase FETCH_HEAD; then
+              git rebase --abort || true
+              echo "::error::rebase onto the moved ${TARGET} conflicted - nothing pushed; the next run re-plans"
+              exit 1
+            fi
+            # The rebased commits must still be exactly the planned one-entry edits: re-run the gate.
+            ./gradlew --no-daemon -q :library:test || { echo "::error::parity gate failed after rebase - nothing pushed"; exit 1; }
+            sleep $((attempt * 3))
+          done
+          echo "::error::could not push after retries - nothing deployed"
+          exit 1
+
+      # Read the deployed file back over the GIT protocol (immediately consistent; the contents API
+      # and raw.githubusercontent lag and once caused a good deploy to be rolled back). A failed
+      # READ is never proof of a bad deploy — only a cleanly read file that lacks the change is.
+      - name: Verify deployed file
+        id: verify
+        if: steps.apply.outputs.applied != ''
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+          APPLIED: ${{ steps.apply.outputs.applied }}
+        run: |
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          read_ok=""
+          for attempt in 1 2 3 4 5; do
+            if git fetch --no-tags --force "$REMOTE" "$TARGET" 2>/tmp/git.err \
+               && git show "FETCH_HEAD:$CONFIG_PATH" > /tmp/deployed.json 2>/dev/null \
+               && [ -s /tmp/deployed.json ] && node -e 'JSON.parse(require("fs").readFileSync("/tmp/deployed.json","utf8"))' 2>/dev/null; then
+              read_ok=1; break
+            fi
+            echo "::warning::git read-back attempt $attempt failed: $(head -c 160 /tmp/git.err 2>/dev/null)"
+            sleep $((attempt * 5))
+          done
+          if [ -z "$read_ok" ]; then
+            echo "::warning::could not read back the deployed file — the push landed, treating as UNVERIFIED, not reverting"
+            echo "verified=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # tools/clients/verify-deploy.mjs (tested): every applied action must be visible in the
+          # read-back table - bench/un-bench flags, SABR flags, bumped identity fields.
+          WRONG=$(node tools/clients/verify-deploy.mjs /tmp/deployed.json /tmp/bumps.json "$APPLIED")
+          if [ -n "$WRONG" ]; then
+            echo "::error::deployed file does not carry: $WRONG — rolling back"
+            echo "verified=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "verified $APPLIED on $TARGET"
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      - name: Revert on proven bad deploy
+        if: always() && steps.verify.outputs.verified == 'false'
+        env:
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+          BASE_SHA: ${{ steps.branch.outputs.base_sha }}
+        run: |
+          REMOTE="https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}"
+          for attempt in 1 2 3; do
+            git revert --no-edit --no-commit "${BASE_SHA}..HEAD" 2>/dev/null || true
+            git commit -m "revert: roll back failed stream-client deploy [skip ci]" 2>/dev/null || true
+            if git push "$REMOTE" "HEAD:${TARGET}"; then
+              echo "::error::rolled back the bad deploy to ${BASE_SHA}"
+              exit 0
+            fi
+            echo "::warning::rollback push failed (attempt $attempt) — refetching $TARGET and retrying"
+            git fetch "$REMOTE" "$TARGET" && git reset --hard FETCH_HEAD
+            sleep 5
+          done
+          echo "::error::COULD NOT roll back the bad deploy after retries — manual intervention required: $TARGET carries an unverified table"
+          exit 1
+
+  # Runs on EVERY scan (not only eventful ones): a quiet run is exactly when the detection issues
+  # of the previous run get closed. Telegram fires only when something happened.
+  notify:
+    needs: [gate, collect, alert, deploy]
+    if: always() && needs.collect.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      # Close what the DEPLOY TARGET has resolved (master in master mode, the run's branch in branch
+      # mode, master when deploy was skipped): a "failing" issue whose entry is now benched there
+      # or drained whole songs this run; a "revived" issue whose entry is live again there; an
+      # "identity drift" issue whose bump was applied this run.
+      - name: Close resolved detection issues
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          # Where the table devices/this pipeline read lives: the deploy target when deploy ran,
+          # else the branch in branch mode (pre-merge, master has no table), else master.
+          TARGET: ${{ needs.deploy.outputs.target || (vars.AUTO_DEPLOY_CLIENTS == 'branch' && github.ref_name) || 'master' }}
+          # From the alert plan when it ran, else from the scan's own pre-plan (a quiet run is
+          # exactly when a "failing" client has come back healthy).
+          HEALTHY: ${{ needs.alert.outputs.healthy || needs.collect.outputs.healthy }}
+          SABR_HEALTHY: ${{ needs.alert.outputs.sabr_healthy || needs.collect.outputs.sabr_healthy }}
+          APPLIED: ${{ needs.deploy.outputs.applied }}
+          # Keys STILL drifting after this run (empty when nothing drifts): a drift issue whose key
+          # is no longer in it was resolved — by this run's bump or an earlier one.
+          DRIFT: ${{ needs.alert.outputs.drift }}
+        run: |
+          # pipefail: the `|| warn` must see gh's exit status, not base64's (which is 0 on empty input).
+          set -o pipefail
+          gh api "repos/$REPO/contents/$CONFIG_PATH?ref=$TARGET" --jq '.content' 2>/dev/null | base64 -d > /tmp/master.json || { echo "::warning::could not read the $TARGET table"; exit 0; }
+          [ -s /tmp/master.json ] || { echo "::warning::empty $TARGET table"; exit 0; }
+          BENCHED=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled===false).map(c=>c.key).join(" "))')
+          SABR_BENCHED=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.sabr&&c.sabr.enabled===false).map(c=>c.key).join(" "))')
+          SABR_LIVE=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.sabr&&c.sabr.enabled!==false).map(c=>c.key).join(" "))')
+          LIVE=$(node -e 'const d=JSON.parse(require("fs").readFileSync("/tmp/master.json","utf8"));process.stdout.write((d.clients||[]).filter(c=>c&&c.enabled!==false).map(c=>c.key).join(" "))')
+          close() { gh api --method POST "repos/$REPO/issues/$1/comments" -f body="$2" >/dev/null || true; gh api --method PATCH "repos/$REPO/issues/$1" -f state=closed >/dev/null && echo "closed #$1"; }
+          gh issue list --repo "$REPO" --state open --limit 100 --json number,title \
+            --jq '.[] | select(.title | test("^Stream client (failing|revived|identity drift|SABR failing|SABR revived): [A-Z0-9_]{1,32}$")) | [.number, .title] | @tsv' \
+          | while IFS=$'\t' read -r NUM TITLE; do
+              KEY="${TITLE##*: }"
+              case "$TITLE" in
+                "Stream client SABR failing: "*)
+                  case " $SABR_BENCHED " in *" $KEY "*) close "$NUM" "Resolved — the SABR capability of \`$KEY\` is benched on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
+                  case " $SABR_HEALTHY " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` drained whole songs over SABR again on this run." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
+                "Stream client SABR revived: "*)
+                  case " $SABR_LIVE " in *" $KEY "*) close "$NUM" "Resolved — the SABR capability of \`$KEY\` is live again on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
+                "Stream client identity drift: "*)
+                  case " $APPLIED " in *" bump:$KEY "*) close "$NUM" "Resolved — \`$KEY\` bumped to yt-dlp master on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
+                  case " $DRIFT " in *" $KEY "*) echo "#$NUM ($KEY) still drifting" ;; *) close "$NUM" "Resolved — \`$KEY\` no longer drifts from yt-dlp master on $TARGET." ;; esac ;;
+                "Stream client failing: "*)
+                  case " $BENCHED " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is benched on $TARGET${SHA:+ ($SHA)}. Devices pick it up within 6 h." ; continue ;; esac
+                  case " $HEALTHY " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` drained whole songs again on this run." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
+                "Stream client revived: "*)
+                  case " $LIVE " in *" $KEY "*) close "$NUM" "Resolved — \`$KEY\` is live again on $TARGET${SHA:+ ($SHA)}." ; continue ;; esac
+                  echo "#$NUM ($KEY) still open" ;;
+              esac
+            done
+
+      - name: Send Telegram notification
+        if: always() && needs.collect.outputs.action_count != '0'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          PRIMARY_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EXTRA_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
+          THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID }}
+          SUMMARY: ${{ needs.alert.outputs.summary || needs.collect.outputs.summary }}
+          BENCH: ${{ needs.alert.outputs.bench }}
+          UNBENCH: ${{ needs.alert.outputs.unbench }}
+          BUMPS: ${{ needs.alert.outputs.bump_keys }}
+          SABR_BENCH: ${{ needs.alert.outputs.sabr_bench }}
+          SABR_UNBENCH: ${{ needs.alert.outputs.sabr_unbench }}
+          REFUSED: ${{ needs.alert.outputs.refused }}
+          DEPLOY_MODE: ${{ vars.AUTO_DEPLOY_CLIENTS }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          APPLIED: ${{ needs.deploy.outputs.applied }}
+          VERIFIED: ${{ needs.deploy.outputs.verified }}
+          TARGET: ${{ needs.deploy.outputs.target }}
+          SHA: ${{ needs.deploy.outputs.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EGRESS: ${{ needs.collect.outputs.slot }}
+        run: |
+          if [ -z "$BOT_TOKEN" ]; then echo "No TELEGRAM_BOT_TOKEN — skipping Telegram."; exit 0; fi
+          if [ "$DEPLOY_RESULT" = "success" ] && [ -n "$APPLIED" ]; then
+            HEAD_LINE="Stream-client table deployed"
+            ACTION=$(printf "Committed: %s\nBranch: %s\nCommit: %s/commit/%s" "$APPLIED" "$TARGET" "$REPO_URL" "$SHA")
+          elif [ "$DEPLOY_RESULT" = "failure" ] && [ "$VERIFIED" = "false" ]; then
+            HEAD_LINE="Stream-client deploy FAILED — rolled back"
+            ACTION="A commit reached $TARGET, verification found the change missing, and an automatic rollback ran. Confirm the branch is clean. Needs a human."
+          elif [ "$DEPLOY_RESULT" = "failure" ]; then
+            HEAD_LINE="Stream-client deploy FAILED"
+            ACTION="apply-bench or the parity gate refused it; nothing was pushed. Needs a human."
+          elif [ -n "$BENCH$UNBENCH$BUMPS$SABR_BENCH$SABR_UNBENCH" ]; then
+            HEAD_LINE="Stream-client change planned, NOT deployed"
+            ACTION=$(printf "Auto-deploy is off (AUTO_DEPLOY_CLIENTS=%s). Planned: bench [%s] un-bench [%s] bump [%s] sabr-bench [%s] sabr-unbench [%s]." "${DEPLOY_MODE:-unset}" "$BENCH" "$UNBENCH" "$BUMPS" "$SABR_BENCH" "$SABR_UNBENCH")
+          else
+            HEAD_LINE="Stream-client monitor: attention"
+            ACTION="Nothing benched this run (first sighting, refused, drift, or an inconclusive scan — see the issues)."
+          fi
+          MESSAGE=$(printf "%s\n\n%s\n\nRefused: %s\n\nEgress: %s\n\n%s\n\nRun: %s" "$HEAD_LINE" "$SUMMARY" "${REFUSED:-none}" "${EGRESS:-?}" "$ACTION" "$RUN_URL")
+          RECIPIENTS=$(printf '%s %s' "$PRIMARY_CHAT_ID" "$EXTRA_CHAT_IDS" | tr ',\n' '  ' | tr -s ' ' '\n' | awk 'NF && !seen[$0]++')
+          for CID in $RECIPIENTS; do
+            THREAD_ARG=()
+            if [ -n "$THREAD_ID" ] && [ "$CID" = "$PRIMARY_CHAT_ID" ]; then THREAD_ARG=(-d "message_thread_id=${THREAD_ID}"); fi
+            curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d chat_id="$CID" "${THREAD_ARG[@]}" --data-urlencode "text=${MESSAGE}"
+          done
