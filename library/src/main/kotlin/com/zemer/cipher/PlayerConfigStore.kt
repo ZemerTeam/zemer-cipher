@@ -107,7 +107,7 @@ object PlayerConfigStore {
 
     /**
      * Synchronous: loads the bundled asset and, if present and valid, the last-good cached
-     * remote copy. Cheap (a ~1.5 KB asset + at most one small file) and guarantees configs
+     * remote copy. Cheap (one bundled JSON asset + at most one cached file) and guarantees configs
      * exist before any lookup.
      */
     fun initialize(context: Context) {
