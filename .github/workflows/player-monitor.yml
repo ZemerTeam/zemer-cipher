@@ -61,7 +61,7 @@ jobs:
   # and no npm install — the pure predicates import only node builtins (jsdom is lazy-loaded and
   # never touched by the tests).
   test:
-    runs-on: [self-hosted, linux, x64, debiantripleu-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -76,7 +76,7 @@ jobs:
 
   scan:
     needs: test
-    runs-on: [self-hosted, linux, x64, debiantripleu-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: {}
     outputs:
@@ -201,7 +201,7 @@ jobs:
   alert:
     needs: scan
     if: needs.scan.outputs.unknown_count != '0'
-    runs-on: [self-hosted, linux, x64, debiantripleu-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       issues: write
@@ -304,7 +304,7 @@ jobs:
     if: >-
       needs.scan.outputs.proposed != '' && needs.scan.outputs.proposed != '0' &&
       (vars.AUTO_DEPLOY_CONFIG == 'branch' || vars.AUTO_DEPLOY_CONFIG == 'master')
-    runs-on: [self-hosted, linux, x64, debiantripleu-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -555,7 +555,7 @@ jobs:
   notify:
     needs: [scan, alert, deploy]
     if: always() && needs.scan.outputs.unknown_count != '0'
-    runs-on: [self-hosted, linux, x64, debiantripleu-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       issues: write
