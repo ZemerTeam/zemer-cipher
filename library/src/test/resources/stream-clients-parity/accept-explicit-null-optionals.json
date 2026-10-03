@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "clients": [
+    {"key": "MAIN", "clientName": "MAIN", "clientVersion": "1.0", "clientId": "1",
+     "userAgent": "Mozilla/5.0 (test)", "protocol": "web_cipher_pot", "family": "MAIN",
+     "osName": null, "deviceMake": null, "loginSupported": null},
+    {"key": "SECOND", "clientName": "SECOND", "clientVersion": "1.0", "clientId": "2",
+     "userAgent": "Mozilla/5.0 (test)", "protocol": "direct", "family": "SECOND",
+     "androidSdkVersion": null, "enabled": null}
+  ]
+}

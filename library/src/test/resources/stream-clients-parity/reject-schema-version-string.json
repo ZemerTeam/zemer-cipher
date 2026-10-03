@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1",
+  "clients": [
+    {"key": "MAIN", "clientName": "MAIN", "clientVersion": "1.0", "clientId": "1",
+     "userAgent": "Mozilla/5.0 (test)", "protocol": "direct", "family": "MAIN"}
+  ]
+}
