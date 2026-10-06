@@ -435,6 +435,7 @@
     "496dd26b": { "sig": "Qn(65,5918,INPUT)", "nClass": "CJ", "sts": 20725, "aliases": ["d19f284b"] },
     "dbc4ebfb": { "sig": "wh(9,7481,INPUT)", "nClass": "jJ", "sts": 20728, "aliases": ["3b71b485"] },
     "1f293754": { "sig": "Sc(5,5551,INPUT)", "nClass": "t$", "sts": 20726, "aliases": ["a4c4a5b4"] },
-    "93572bf8": { "sig": "Hf(28,1950,INPUT)", "nClass": "ol", "sts": 20731, "aliases": ["b4a68e1c"] }
+    "93572bf8": { "sig": "Hf(28,1950,INPUT)", "nClass": "ol", "sts": 20731, "aliases": ["b4a68e1c"] },
+    "a5b84ee3": { "sig": "DV(2,3435,INPUT)", "nClass": "YS", "sts": 20732, "aliases": ["80239721"] }
   }
 }
