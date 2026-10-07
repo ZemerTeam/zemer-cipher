@@ -440,6 +440,7 @@
     "2373b006": { "sig": "rb(2,3435,INPUT)", "nClass": "bo", "sts": 20732, "aliases": ["b2d6f01c"] },
     "89b63303": { "sig": "kw(2,3435,INPUT)", "nClass": "LP", "sts": 20732, "aliases": ["46fe8fdc"] },
     "5203c085": { "sig": "rb(2,3435,INPUT)", "nClass": "bo", "sts": 20732, "aliases": ["df6bd35f"] },
-    "98a02d32": { "sig": "HD(40,5835,INPUT)", "nClass": "Tb", "sts": 20733, "aliases": ["8973b4ce"] }
+    "98a02d32": { "sig": "HD(40,5835,INPUT)", "nClass": "Tb", "sts": 20733, "aliases": ["8973b4ce"] },
+    "7daa59ad": { "sig": "HD(40,5835,INPUT)", "nClass": "Tb", "sts": 20733 }
   }
 }
