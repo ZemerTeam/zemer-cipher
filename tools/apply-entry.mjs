@@ -56,13 +56,23 @@ export function checkAppendOnly(before, after, newHash) {
 }
 
 /**
- * Is this entry already covered by the table — as its primary hash OR any of its md5 aliases?
- * Used to classify a collision as a NO-OP (already deployed, incl. an earlier same-md5 skin in
- * the same batch) rather than a hard error. Pure.
+ * Is this entry already covered by the table? Only its OWN hash counts: a device looks a player up
+ * by the hash in its player URL (PlayerJsFetcher passes it as knownHash), never by the md5 alias,
+ * so a hash reachable only through another entry's md5 alias is NOT covered on any device
+ * (zemer-cipher#188: f2999a12 and 1b3be681 broke every cipher client that way). Pure.
  */
-export function entryAlreadyCovered(players, hash, aliases = []) {
+export function entryAlreadyCovered(players, hash) {
+  return coveredKeys(players).has(hash);
+}
+
+/**
+ * The aliases a new entry can carry without a collision: an md5 alias another entry already owns
+ * belongs to that byte-identical twin and stays there; the new entry is added under its own hash.
+ * Pure.
+ */
+export function freeAliases(players, aliases = []) {
   const covered = coveredKeys(players);
-  return covered.has(hash) || aliases.some((a) => covered.has(a));
+  return aliases.filter((a) => !covered.has(a));
 }
 
 /** Collision check against the whole accepted key space, not just primary keys. */
@@ -122,18 +132,22 @@ async function main() {
   const originalText = readFileSync(configPath, "utf8");
   const before = JSON.parse(originalText);
 
+  // Already covered is a NO-OP, not a failure: master moves out-of-band when a rotation is
+  // deployed by hand, and the pipeline must never treat that as an error to retry forever.
+  // "Covered" means the entry's OWN hash is already a key or alias. An md5 alias another entry
+  // already owns (a byte-identical skin, incl. an earlier one in this batch) is dropped from the
+  // new entry instead of making it a no-op: devices never resolve a player by its md5, so the
+  // skin's own hash still has to be added (zemer-cipher#188).
+  if (entryAlreadyCovered(before.players, hash)) {
+    console.log(JSON.stringify({ ok: false, noop: true, reason: `hash '${hash}' is already covered` }, null, 2));
+    process.exit(0);
+  }
+  entry.aliases = freeAliases(before.players, entry.aliases ?? []);
+  if (!entry.aliases.length) delete entry.aliases;
   const collision = checkNoCollision(before.players, hash, entry.aliases ?? []);
   if (!collision.ok) {
-    // Already covered is a NO-OP, not a failure: master moves out-of-band when a rotation is
-    // deployed by hand, and the pipeline must never treat that as an error to retry forever.
-    // "Covered" means the whole accepted key space — the primary hash OR any of the entry's md5
-    // aliases already present. Two byte-identical skins in ONE batch share an md5 alias: once the
-    // first is applied, the second is genuinely redundant (a device computes the same md5 and
-    // resolves it), so it must exit 0 (noop) — NOT exit 1, which under `set -e` would abort the
-    // whole deploy apply loop and discard the first, already-applied entry.
-    const alreadyCovered = entryAlreadyCovered(before.players, hash, entry.aliases ?? []);
-    console.log(JSON.stringify({ ok: false, noop: alreadyCovered, reason: collision.reason }, null, 2));
-    process.exit(alreadyCovered ? 0 : 1);
+    console.log(JSON.stringify({ ok: false, noop: false, reason: collision.reason }, null, 2));
+    process.exit(1);
   }
 
   const nextText = insertEntryLine(originalText, hash, entry);

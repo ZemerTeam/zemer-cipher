@@ -14,6 +14,7 @@ import {
   checkNoCollision,
   coveredKeys,
   entryAlreadyCovered,
+  freeAliases,
   serializeEntry,
   insertEntryLine,
 } from "./apply-entry.mjs";
@@ -181,15 +182,23 @@ test("collision check rejects a hash or alias already covered", () => {
   assert.equal(checkNoCollision(players, "aaaaaaaa", ["bbbbbbbb"]).ok, true);
 });
 
-test("entryAlreadyCovered treats a primary OR alias hit as covered (the #4 noop fix)", () => {
+test("entryAlreadyCovered counts only the entry's own hash (#188: devices never look up by md5)", () => {
   const players = JSON.parse(CONFIG_TEXT).players;
   // Primary already present -> covered (a hand-deploy of the same hash).
-  assert.equal(entryAlreadyCovered(players, "9c249f6f", []), true, "primary present");
-  // The entry's md5 alias is already covered (e.g. the first of two same-md5 skins in one batch
-  // was applied moments ago) -> covered, so the second exits noop(0), never aborting the loop.
-  assert.equal(entryAlreadyCovered(players, "ffffffff", ["a6fc27c5"]), true, "alias already covered");
-  // A genuinely new hash+alias -> not covered (real work to do).
-  assert.equal(entryAlreadyCovered(players, "ffffffff", ["eeeeeeee"]), false, "genuinely new");
+  assert.equal(entryAlreadyCovered(players, "9c249f6f"), true, "primary present");
+  // Present as another entry's alias -> covered (a hand-added alias).
+  assert.equal(entryAlreadyCovered(players, "a6fc27c5"), true, "own hash is an alias");
+  // A byte-identical skin whose only link to the table is a shared md5 alias is NOT covered:
+  // a device asks for "ffffffff", finds nothing, and loses every cipher client.
+  assert.equal(entryAlreadyCovered(players, "ffffffff"), false, "md5-only twin is not covered");
+});
+
+test("freeAliases drops md5 aliases another entry owns, keeps new ones", () => {
+  const players = JSON.parse(CONFIG_TEXT).players;
+  assert.deepEqual(freeAliases(players, ["a6fc27c5"]), [], "owned by the twin");
+  assert.deepEqual(freeAliases(players, ["a6fc27c5", "eeeeeeee"]), ["eeeeeeee"]);
+  assert.deepEqual(freeAliases(players, []), []);
+  assert.deepEqual(freeAliases(players), []);
 });
 
 test("append-only accepts exactly one addition", () => {
@@ -293,4 +302,15 @@ test("googlevideo URL check is host- and path-exact", () => {
   assert.equal(isGoogleVideoPlaybackUrl("https://googlevideo.com.evil.tld/videoplayback"), false);
   assert.equal(isGoogleVideoPlaybackUrl("https://r1---sn-x.googlevideo.com/other"), false);
   assert.equal(isGoogleVideoPlaybackUrl("not a url"), false);
+});
+
+test("urlUncovered adds live hashes that are only md5-covered (#188)", async () => {
+  const { urlUncovered } = await import("./url-uncovered.mjs");
+  const players = JSON.parse(CONFIG_TEXT).players;
+  const scan = {
+    distinct: [{ hash: "9c249f6f", count: 9 }, { hash: "a6fc27c5", count: 2 }, { hash: "ffffffff", count: 30 }, { hash: "eeeeeeee", count: 1 }],
+    unknown: [{ hash: "eeeeeeee", count: 1, md5: "12345678", sts: 1 }],
+  };
+  assert.deepEqual(urlUncovered(scan, players).map((d) => d.hash), ["ffffffff"], "key and alias covered, eeeeeeee already unknown");
+  assert.deepEqual(urlUncovered({}, players), []);
 });
