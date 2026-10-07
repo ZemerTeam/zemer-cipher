@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "clients": [
+    {
+      "key": "WEB_REMIX",
+      "clientName": "WEB_REMIX",
+      "clientVersion": "1.20260707.12.00",
+      "clientId": "67",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
+      "protocol": "web_cipher_pot",
+      "family": "WEB_REMIX",
+      "mirrors": "web_music",
+      "loginSupported": true,
+      "skipHeadValidation": true,
+      "sabr": { "osName": "Windows", "osVersion": "10.0" }
+    },
+    {
+      "key": "VISIONOS",
+      "clientName": "VISIONOS",
+      "clientVersion": "1.02",
+      "clientId": "101",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+      "protocol": "direct",
+      "family": "VISIONOS",
+      "mirrors": "visionos",
+      "osName": "visionOS",
+      "osVersion": "26.5.23O471",
+      "deviceMake": "Apple",
+      "deviceModel": "RealityDevice17,1",
+      "sabr": {}
+    },
+    {
+      "key": "VISIONOS_0_1",
+      "clientName": "VISIONOS",
+      "clientVersion": "0.1",
+      "clientId": "101",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+      "protocol": "direct",
+      "family": "VISIONOS",
+      "osName": "visionOS",
+      "osVersion": "1.3.21O771",
+      "deviceMake": "Apple",
+      "deviceModel": "RealityDevice14,1"
+    },
+    {
+      "key": "WEB_CREATOR",
+      "clientName": "WEB_CREATOR",
+      "clientVersion": "1.20260708.06.00",
+      "clientId": "62",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0",
+      "protocol": "web_cipher_pot",
+      "family": "WEB_CREATOR",
+      "mirrors": "web_creator",
+      "loginSupported": true,
+      "loginRequired": true
+    },
+    {
+      "key": "TVHTML5_SIMPLY",
+      "clientName": "TVHTML5_SIMPLY",
+      "clientVersion": "1.0",
+      "clientId": "75",
+      "userAgent": "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/25.lts.30.1034943-gold (unlike Gecko), Unknown_TV_Unknown_0/Unknown (Unknown, Unknown)",
+      "protocol": "web_cipher_pot",
+      "family": "TVHTML5",
+      "mirrors": "tv_simply",
+      "sabr": {}
+    }
+  ],
+  "families": [
+    { "id": "WEB_REMIX", "title": "YouTube Music Web", "group": "web" },
+    { "id": "VISIONOS", "title": "visionOS", "group": "native" },
+    { "id": "WEB_CREATOR", "title": "YouTube Studio", "group": "creator" },
+    { "id": "TVHTML5", "title": "TVHTML5", "group": "web" }
+  ]
+}

@@ -54,6 +54,8 @@ object ZemerCipher {
         this.debugLogging = debugLogging
         PlayerConfigStore.initialize(context)
         PlayerConfigStore.scheduleStartupRefresh()
+        StreamClientStore.initialize(context)
+        StreamClientStore.scheduleStartupRefresh()
         PlayerDatesStore.initialize(context)
     }
 }
