@@ -437,6 +437,7 @@
     "1f293754": { "sig": "Sc(5,5551,INPUT)", "nClass": "t$", "sts": 20726, "aliases": ["a4c4a5b4"] },
     "93572bf8": { "sig": "Hf(28,1950,INPUT)", "nClass": "ol", "sts": 20731, "aliases": ["b4a68e1c"] },
     "a5b84ee3": { "sig": "DV(2,3435,INPUT)", "nClass": "YS", "sts": 20732, "aliases": ["80239721"] },
-    "2373b006": { "sig": "rb(2,3435,INPUT)", "nClass": "bo", "sts": 20732, "aliases": ["b2d6f01c"] }
+    "2373b006": { "sig": "rb(2,3435,INPUT)", "nClass": "bo", "sts": 20732, "aliases": ["b2d6f01c"] },
+    "89b63303": { "sig": "kw(2,3435,INPUT)", "nClass": "LP", "sts": 20732, "aliases": ["46fe8fdc"] }
   }
 }
