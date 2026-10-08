@@ -443,6 +443,7 @@
     "98a02d32": { "sig": "HD(40,5835,INPUT)", "nClass": "Tb", "sts": 20733, "aliases": ["8973b4ce"] },
     "7daa59ad": { "sig": "HD(40,5835,INPUT)", "nClass": "Tb", "sts": 20733 },
     "56a32ca6": { "sig": "HD(40,5835,INPUT)", "nClass": "Tb", "sts": 20733 },
-    "de55d811": { "sig": "lF(40,5835,INPUT)", "nClass": "Ay", "sts": 20733, "aliases": ["1ed54fe5"] }
+    "de55d811": { "sig": "lF(40,5835,INPUT)", "nClass": "Ay", "sts": 20733, "aliases": ["1ed54fe5"] },
+    "f36ef2f0": { "sig": "lF(40,5835,INPUT)", "nClass": "Ay", "sts": 20733 }
   }
 }
