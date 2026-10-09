@@ -450,6 +450,7 @@
     "73252d67": { "sig": "G9(7,6899,INPUT)", "nClass": "BG", "sts": 20734, "aliases": ["68f28071"] },
     "a9596022": { "sig": "G9(7,6899,INPUT)", "nClass": "BG", "sts": 20734 },
     "adbaabd3": { "sig": "wG(7,6899,INPUT)", "nClass": "pE", "sts": 20734, "aliases": ["6d9f8d21"] },
-    "99afa6f1": { "sig": "Hw(7,6899,INPUT)", "nClass": "vF", "sts": 20734, "aliases": ["bb06c5fa"] }
+    "99afa6f1": { "sig": "Hw(7,6899,INPUT)", "nClass": "vF", "sts": 20734, "aliases": ["bb06c5fa"] },
+    "6e539070": { "sig": "Hw(7,6899,INPUT)", "nClass": "vF", "sts": 20734 }
   }
 }
