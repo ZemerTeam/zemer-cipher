@@ -465,6 +465,7 @@
     "ee9658aa": { "sig": "nD(5,5449,INPUT)", "nClass": "Di", "sts": 20738 },
     "226b9b94": { "sig": "RG(5,5449,INPUT)", "nClass": "xa", "sts": 20738, "aliases": ["d1e6e263"] },
     "21090930": { "sig": "RG(5,5449,INPUT)", "nClass": "xa", "sts": 20738 },
-    "4db0dd7d": { "sig": "Ya(5,5449,INPUT)", "nClass": "Pb", "sts": 20738, "aliases": ["e5b5c44d"] }
+    "4db0dd7d": { "sig": "Ya(5,5449,INPUT)", "nClass": "Pb", "sts": 20738, "aliases": ["e5b5c44d"] },
+    "41847f6b": { "sig": "Ya(5,5449,INPUT)", "nClass": "Pb", "sts": 20738 }
   }
 }
