@@ -472,6 +472,7 @@
     "1996f5f7": { "sig": "oF(17,1206,INPUT)", "nClass": "QK", "sts": 20739 },
     "4c3b0988": { "sig": "P1(17,1206,INPUT)", "nClass": "bB", "sts": 20739, "aliases": ["e071f443"] },
     "0229cd64": { "sig": "P1(17,1206,INPUT)", "nClass": "bB", "sts": 20739, "aliases": ["8dfbe68b"] },
-    "8da84994": { "sig": "P1(17,1206,INPUT)", "nClass": "bB", "sts": 20739 }
+    "8da84994": { "sig": "P1(17,1206,INPUT)", "nClass": "bB", "sts": 20739 },
+    "0d9899a8": { "sig": "P1(17,1206,INPUT)", "nClass": "bB", "sts": 20739 }
   }
 }
