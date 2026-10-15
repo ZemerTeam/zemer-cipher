@@ -478,6 +478,7 @@
     "25178217": { "sig": "qw(72,7798,INPUT)", "nClass": "Dr", "sts": 20740, "aliases": ["202905cb"] },
     "94e937f9": { "sig": "qw(72,7798,INPUT)", "nClass": "Dr", "sts": 20740, "aliases": ["f4141a4f"] },
     "24299858": { "sig": "a0(72,7798,INPUT)", "nClass": "kq", "sts": 20740, "aliases": ["7b58401d"] },
-    "c271e571": { "sig": "a0(72,7798,INPUT)", "nClass": "kq", "sts": 20740 }
+    "c271e571": { "sig": "a0(72,7798,INPUT)", "nClass": "kq", "sts": 20740 },
+    "95d777dc": { "sig": "a0(72,7798,INPUT)", "nClass": "kq", "sts": 20740 }
   }
 }
