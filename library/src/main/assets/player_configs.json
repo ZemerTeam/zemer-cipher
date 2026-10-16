@@ -483,6 +483,7 @@
     "40dba4d7": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741, "aliases": ["f44465e3"] },
     "e29a2e88": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 },
     "52726943": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 },
-    "b6eda4df": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 }
+    "b6eda4df": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 },
+    "8f9b066a": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 }
   }
 }
