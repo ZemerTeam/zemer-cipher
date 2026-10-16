@@ -485,6 +485,7 @@
     "52726943": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 },
     "b6eda4df": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 },
     "8f9b066a": { "sig": "vL(25,4433,INPUT)", "nClass": "QI", "sts": 20741 },
-    "0ed38f41": { "sig": "Sx(25,4433,INPUT)", "nClass": "dH", "sts": 20741, "aliases": ["1748cd0b"] }
+    "0ed38f41": { "sig": "Sx(25,4433,INPUT)", "nClass": "dH", "sts": 20741, "aliases": ["1748cd0b"] },
+    "4d596e5d": { "sig": "Le(25,1424,INPUT)", "nClass": "qt", "sts": 20742, "aliases": ["83f0e2d1"] }
   }
 }
