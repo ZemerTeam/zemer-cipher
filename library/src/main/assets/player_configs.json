@@ -497,6 +497,7 @@
     "0c08fd03": { "sig": "Ga(17,5122,INPUT)", "nClass": "Wh", "sts": 20745 },
     "b9617b2b": { "sig": "Ga(17,5122,INPUT)", "nClass": "Wh", "sts": 20745 },
     "f00759e4": { "sig": "zl(17,5122,INPUT)", "nClass": "Gx", "sts": 20745, "aliases": ["fd1e678e"] },
-    "55de7e60": { "sig": "zl(17,5122,INPUT)", "nClass": "Gx", "sts": 20745 }
+    "55de7e60": { "sig": "zl(17,5122,INPUT)", "nClass": "Gx", "sts": 20745 },
+    "5cfa1694": { "sig": "zl(17,5122,INPUT)", "nClass": "Gx", "sts": 20745, "aliases": ["fa84a16e"] }
   }
 }
