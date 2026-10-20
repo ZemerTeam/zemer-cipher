@@ -494,6 +494,7 @@
     "67288f35": { "sig": "Ww(25,7059,INPUT)", "nClass": "Vw", "sts": 20744 },
     "e05dbddf": { "sig": "Ww(25,7059,INPUT)", "nClass": "Vw", "sts": 20744 },
     "050b1fde": { "sig": "Ga(17,5122,INPUT)", "nClass": "Wh", "sts": 20745, "aliases": ["14c04b7e"] },
-    "0c08fd03": { "sig": "Ga(17,5122,INPUT)", "nClass": "Wh", "sts": 20745 }
+    "0c08fd03": { "sig": "Ga(17,5122,INPUT)", "nClass": "Wh", "sts": 20745 },
+    "b9617b2b": { "sig": "Ga(17,5122,INPUT)", "nClass": "Wh", "sts": 20745 }
   }
 }
