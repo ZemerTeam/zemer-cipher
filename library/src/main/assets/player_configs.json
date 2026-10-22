@@ -508,6 +508,7 @@
     "96be8342": { "sig": "Ka(17,1452,INPUT)", "nClass": "Ja", "sts": 20746, "aliases": ["a7dc8dd0"] },
     "ab13dbe5": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746, "aliases": ["2a1231bc"] },
     "c5756c05": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 },
-    "62a919da": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 }
+    "62a919da": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 },
+    "723bc247": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 }
   }
 }
