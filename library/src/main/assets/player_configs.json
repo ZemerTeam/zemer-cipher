@@ -521,6 +521,7 @@
     "e758b027": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 },
     "8ab05f58": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 },
     "34aa6957": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 },
-    "c7c1f09f": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 }
+    "c7c1f09f": { "sig": "bi(17,1452,INPUT)", "nClass": "aL", "sts": 20746 },
+    "229da090": { "sig": "lK(4,443,INPUT)", "nClass": "Rm", "sts": 20749, "aliases": ["c26dda42"] }
   }
 }
