@@ -525,6 +525,7 @@
     "229da090": { "sig": "lK(4,443,INPUT)", "nClass": "Rm", "sts": 20749, "aliases": ["c26dda42"] },
     "7058adf5": { "sig": "zb(1,6474,INPUT)", "nClass": "yb", "sts": 20751, "aliases": ["4591528e"] },
     "6b2fce74": { "sig": "zb(1,6474,INPUT)", "nClass": "yb", "sts": 20751 },
-    "386a813f": { "sig": "zb(1,6474,INPUT)", "nClass": "yb", "sts": 20751 }
+    "386a813f": { "sig": "zb(1,6474,INPUT)", "nClass": "yb", "sts": 20751 },
+    "f312a968": { "sig": "ks(5,6005,INPUT)", "nClass": "zD", "sts": 20752, "aliases": ["171eb67c"] }
   }
 }
