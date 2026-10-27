@@ -530,6 +530,7 @@
     "649a7c3e": { "sig": "Yf(5,6005,INPUT)", "nClass": "Gz", "sts": 20752, "aliases": ["c5ca6730"] },
     "5f5fec83": { "sig": "Yf(5,6005,INPUT)", "nClass": "Gz", "sts": 20752 },
     "03f27def": { "sig": "$H(5,6005,INPUT)", "nClass": "Jd", "sts": 20752, "aliases": ["45be2673"] },
-    "6555c59e": { "sig": "Ok(5,6005,INPUT)", "nClass": "Nx", "sts": 20752, "aliases": ["f8b08a10"] }
+    "6555c59e": { "sig": "Ok(5,6005,INPUT)", "nClass": "Nx", "sts": 20752, "aliases": ["f8b08a10"] },
+    "096efeec": { "sig": "Ok(5,6005,INPUT)", "nClass": "Nx", "sts": 20752 }
   }
 }
