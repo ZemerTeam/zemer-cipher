@@ -531,6 +531,7 @@
     "5f5fec83": { "sig": "Yf(5,6005,INPUT)", "nClass": "Gz", "sts": 20752 },
     "03f27def": { "sig": "$H(5,6005,INPUT)", "nClass": "Jd", "sts": 20752, "aliases": ["45be2673"] },
     "6555c59e": { "sig": "Ok(5,6005,INPUT)", "nClass": "Nx", "sts": 20752, "aliases": ["f8b08a10"] },
-    "096efeec": { "sig": "Ok(5,6005,INPUT)", "nClass": "Nx", "sts": 20752 }
+    "096efeec": { "sig": "Ok(5,6005,INPUT)", "nClass": "Nx", "sts": 20752 },
+    "47d69dc2": { "sig": "Xj(5,6005,INPUT)", "nClass": "ol", "sts": 20752, "aliases": ["dd0b009d"] }
   }
 }
