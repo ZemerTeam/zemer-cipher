@@ -547,6 +547,7 @@
     "e97a3dee": { "sig": "Ma(49,5806,INPUT)", "nClass": "yr", "sts": 20754, "aliases": ["74c629f1"] },
     "89742f12": { "sig": "Lw(80,5355,INPUT)", "nClass": "pK", "sts": 20755, "aliases": ["f52767cf"] },
     "11a54379": { "sig": "Lw(80,5355,INPUT)", "nClass": "pK", "sts": 20755 },
-    "3f9ea5a8": { "sig": "Lw(80,5355,INPUT)", "nClass": "pK", "sts": 20755 }
+    "3f9ea5a8": { "sig": "Lw(80,5355,INPUT)", "nClass": "pK", "sts": 20755 },
+    "50558212": { "sig": "Fe(80,5355,INPUT)", "nClass": "Lm", "sts": 20755, "aliases": ["c3e008d9"] }
   }
 }
