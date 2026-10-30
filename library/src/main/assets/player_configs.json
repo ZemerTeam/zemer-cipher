@@ -548,6 +548,7 @@
     "89742f12": { "sig": "Lw(80,5355,INPUT)", "nClass": "pK", "sts": 20755, "aliases": ["f52767cf"] },
     "11a54379": { "sig": "Lw(80,5355,INPUT)", "nClass": "pK", "sts": 20755 },
     "3f9ea5a8": { "sig": "Lw(80,5355,INPUT)", "nClass": "pK", "sts": 20755 },
-    "50558212": { "sig": "Fe(80,5355,INPUT)", "nClass": "Lm", "sts": 20755, "aliases": ["c3e008d9"] }
+    "50558212": { "sig": "Fe(80,5355,INPUT)", "nClass": "Lm", "sts": 20755, "aliases": ["c3e008d9"] },
+    "8c1e5c4d": { "sig": "ta(80,5355,INPUT)", "nClass": "Ou", "sts": 20755, "aliases": ["09023cf1"] }
   }
 }
