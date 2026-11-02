@@ -314,3 +314,16 @@ test("urlUncovered adds live hashes that are only md5-covered (#188)", async () 
   assert.deepEqual(urlUncovered(scan, players).map((d) => d.hash), ["ffffffff"], "key and alias covered, eeeeeeee already unknown");
   assert.deepEqual(urlUncovered({}, players), []);
 });
+
+test("deviceHashes keeps only well-formed, uncovered, new hashes, at most 5", async () => {
+  const { deviceHashes, MAX_DEVICE_HASHES } = await import("./device-hashes.mjs");
+  const players = JSON.parse(CONFIG_TEXT).players;
+  const scan = { unknown: [{ hash: "eeeeeeee", count: 1 }] };
+  // 9c249f6f is a URL key; eeeeeeee is already unknown; the rest are malformed or injection attempts.
+  const raw = "e784b7f5 9c249f6f eeeeeeee E784B7F5 e784b7f5 1234567 123456789 $(id) ;rm -rf x 0a1b2c3d";
+  assert.deepEqual(deviceHashes(raw, scan, players), ["e784b7f5", "0a1b2c3d"]);
+  assert.deepEqual(deviceHashes("", scan, players), []);
+  assert.deepEqual(deviceHashes(undefined, {}, players), []);
+  const many = "aaaaaaa1 aaaaaaa2 aaaaaaa3 aaaaaaa4 aaaaaaa5 aaaaaaa6 aaaaaaa7";
+  assert.equal(deviceHashes(many, {}, players).length, MAX_DEVICE_HASHES);
+});
