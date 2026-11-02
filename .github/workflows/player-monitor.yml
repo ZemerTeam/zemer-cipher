@@ -314,7 +314,9 @@ jobs:
   # Never let it pass as "all covered": one deduped issue, an email, and a red run.
   blind:
     needs: scan
-    if: needs.scan.outputs.blind != ''
+    # !cancelled(): the scan publishes `blind` before its validate/upload steps, so a later failure
+    # in that job must not suppress the alert (a bare condition carries an implicit success()).
+    if: ${{ !cancelled() && needs.scan.outputs.blind != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -340,19 +342,25 @@ jobs:
             const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
             });
-            if (open.some(i => i.title === title)) { console.log('Blind issue already open.'); return; }
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `The live player scan got **no player at all** from: \`${process.env.BLIND}\` (latest run).`,
+              '',
+              'A canary served there would go unseen until it breaks playback. The scan log in the run',
+              `lists each surface's errors: ${run}`,
+              '',
+              'Reproduce locally: `node tests/scan-live-players.mjs cipher/library/src/main/assets/player_configs.json 30` (zemer-app).',
+              'Close this issue once a run is green again.',
+            ].join('\n');
+            // One open issue, kept current: the blind surfaces can change between runs.
+            const existing = open.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
+              console.log(`Updated blind issue #${existing.number}.`);
+              return;
+            }
             await github.rest.issues.create({
-              owner: context.repo.owner, repo: context.repo.repo, title,
-              body: [
-                `The live player scan got **no player at all** from: \`${process.env.BLIND}\`.`,
-                '',
-                'A canary served there would go unseen until it breaks playback. The scan log in the run',
-                `lists each surface's errors: ${run}`,
-                '',
-                'Reproduce locally: `node tests/scan-live-players.mjs cipher/library/src/main/assets/player_configs.json 30` (zemer-app).',
-                'Close this issue once a run is green again.',
-              ].join('\n'),
+              owner: context.repo.owner, repo: context.repo.repo, title, body,
               labels: ['player-update', 'cipher'],
             });
 
