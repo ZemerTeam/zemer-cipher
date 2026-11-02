@@ -140,19 +140,14 @@ jobs:
           RC=0
           node harness/tests/scan-live-players.mjs "$CONFIG_PATH" 30 > /tmp/scan.json 2> /tmp/scan.log || RC=$?
           cat /tmp/scan.log
-          # A surface blinded only by HTTP 429 is usually this runner's shared address being rate
-          # limited for a moment (2026-11-02 22:00: watch + mobile 429 x22, the other 6 surfaces
-          # fine). Scan again once after a pause; the fresh full scan replaces the first only when
-          # the first found no unknown player, so a canary sighting is never thrown away.
-          if [ "$RC" = 3 ] && node -e "const j=JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8'));process.exit(!(j.unknown||[]).length&&(j.blind||[]).every(b=>Object.keys(j.surfaces[b].errors).every(e=>e==='HTTP 429'))?0:1)"; then
-            echo "::warning::blind only from HTTP 429 ($(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).blind.join(' '))")); scanning again in 120 s"
-            sleep 120
-            RC2=0
-            node harness/tests/scan-live-players.mjs "$CONFIG_PATH" 30 > /tmp/scan2.json 2> /tmp/scan2.log || RC2=$?
-            cat /tmp/scan2.log
-            if [ "$RC2" = 0 ] || [ "$RC2" = 3 ]; then mv /tmp/scan2.json /tmp/scan.json; RC=$RC2; fi
-          fi
           [ "$RC" = 0 ] || [ "$RC" = 3 ] || exit "$RC"
+          # Since 2026-11-02 22:00 YouTube answers the watch + mobile pages with HTTP 429 to every GitHub
+          # runner (a rescan 2 min later got 429 again) while the other surfaces answer. A side surface
+          # blinded ONLY by 429 is a warning here, not blind: the zemer-search VPS scans every surface
+          # hourly (scripts/cipher-dispatch.mjs, its unknowns arrive as `hashes`) and alerts on its own
+          # when it goes blind. iframe_api (the page the app reads) or any other error stays blind.
+          LIMITED=$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('/tmp/scan.json','utf8'));const lim=(j.blind||[]).filter(b=>b!=='iframe_api'&&Object.keys(j.surfaces[b].errors).length&&Object.keys(j.surfaces[b].errors).every(e=>e==='HTTP 429'));j.blind=(j.blind||[]).filter(b=>!lim.includes(b));fs.writeFileSync('/tmp/scan.json',JSON.stringify(j,null,2));process.stdout.write(lim.join(' '))")
+          [ -z "$LIMITED" ] || echo "::warning::rate limited (HTTP 429 only) on $LIMITED: left to the VPS hourly scan"
           echo "blind=$(node -e "process.stdout.write((JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).blind||[]).join(' '))")" >> "$GITHUB_OUTPUT"
           # The harness counts an md5-only match as covered, but devices look a player up by its URL
           # hash only (#188). Any live hash missing from the table goes through the normal path.
