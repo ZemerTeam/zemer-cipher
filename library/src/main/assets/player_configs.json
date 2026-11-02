@@ -552,6 +552,7 @@
     "8c1e5c4d": { "sig": "ta(80,5355,INPUT)", "nClass": "Ou", "sts": 20755, "aliases": ["09023cf1"] },
     "4a1e575f": { "sig": "bs(8,1901,INPUT)", "nClass": "Wq", "sts": 20758, "aliases": ["62cb45e2"] },
     "e784b7f5": { "sig": "bs(8,1901,INPUT)", "nClass": "Wq", "sts": 20758 },
-    "c65d4dfb": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759, "aliases": ["84006ec4"] }
+    "c65d4dfb": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759, "aliases": ["84006ec4"] },
+    "3a026a7c": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 }
   }
 }
