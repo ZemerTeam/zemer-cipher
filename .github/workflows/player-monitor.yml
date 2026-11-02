@@ -140,6 +140,18 @@ jobs:
           RC=0
           node harness/tests/scan-live-players.mjs "$CONFIG_PATH" 30 > /tmp/scan.json 2> /tmp/scan.log || RC=$?
           cat /tmp/scan.log
+          # A surface blinded only by HTTP 429 is usually this runner's shared address being rate
+          # limited for a moment (2026-11-02 22:00: watch + mobile 429 x22, the other 6 surfaces
+          # fine). Scan again once after a pause; the fresh full scan replaces the first only when
+          # the first found no unknown player, so a canary sighting is never thrown away.
+          if [ "$RC" = 3 ] && node -e "const j=JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8'));process.exit(!(j.unknown||[]).length&&(j.blind||[]).every(b=>Object.keys(j.surfaces[b].errors).every(e=>e==='HTTP 429'))?0:1)"; then
+            echo "::warning::blind only from HTTP 429 ($(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).blind.join(' '))")); scanning again in 120 s"
+            sleep 120
+            RC2=0
+            node harness/tests/scan-live-players.mjs "$CONFIG_PATH" 30 > /tmp/scan2.json 2> /tmp/scan2.log || RC2=$?
+            cat /tmp/scan2.log
+            if [ "$RC2" = 0 ] || [ "$RC2" = 3 ]; then mv /tmp/scan2.json /tmp/scan.json; RC=$RC2; fi
+          fi
           [ "$RC" = 0 ] || [ "$RC" = 3 ] || exit "$RC"
           echo "blind=$(node -e "process.stdout.write((JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).blind||[]).join(' '))")" >> "$GITHUB_OUTPUT"
           # The harness counts an md5-only match as covered, but devices look a player up by its URL
@@ -369,7 +381,7 @@ jobs:
               `lists each surface's errors: ${run}`,
               '',
               'Reproduce locally: `node tests/scan-live-players.mjs cipher/library/src/main/assets/player_configs.json 30` (zemer-app).',
-              'Close this issue once a run is green again.',
+              'This issue closes itself on the next scan that sees every surface.',
             ].join('\n');
             // One open issue, kept current: the blind surfaces can change between runs.
             const existing = open.find(i => i.title === title);
@@ -404,6 +416,36 @@ jobs:
         run: |
           echo "::error::player scan got no player from: ${{ needs.scan.outputs.blind }}"
           exit 1
+
+  # The scan saw every surface again: close the blind issue so a one-off rate limit does not read
+  # as an ongoing outage.
+  unblind:
+    needs: scan
+    if: ${{ needs.scan.result == 'success' && needs.scan.outputs.blind == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      - name: Close the blind issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
+            });
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            for (const i of open.filter(i => i.title === 'Player monitor is blind')) {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: i.number, body: `Every surface returned a player again: ${run}` });
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: i.number, state: 'closed', state_reason: 'completed' });
+              console.log(`Closed blind issue #${i.number}.`);
+            }
 
   deploy:
     needs: scan
