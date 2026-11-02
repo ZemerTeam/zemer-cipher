@@ -424,18 +424,13 @@ jobs:
     if: ${{ needs.scan.result == 'success' && needs.scan.outputs.blind == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The workflow's own token: the Zemer App may open and edit issues but not comment on them.
+    permissions:
+      issues: write
     steps:
-      - name: Generate Zemer App token
-        id: bot
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.ZEMER_APP_ID }}
-          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
-
       - name: Close the blind issue
         uses: actions/github-script@v7
         with:
-          github-token: ${{ steps.bot.outputs.token }}
           script: |
             const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
