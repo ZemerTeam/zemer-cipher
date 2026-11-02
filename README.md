@@ -88,6 +88,21 @@ files (including hash/alias collisions) are rejected wholesale and devices keep 
 last-good table. Bump `schemaVersion` **only** on breaking shape changes - older apps reject
 newer schema files and keep working from their last-good table.
 
+### Player dates (`player_dates.json`)
+
+A separate, cosmetic file at the repo root: a flat `{ "<hash>": "YYYY-MM-DD" }` map of when cipher
+support for each player landed, shown next to the player hash in the app's song-details sheet.
+
+- **Remote-only.** It is NOT bundled; `PlayerDatesStore` fetches it from this repo's raw `master`
+  URL and keeps an on-disk copy (its own `cipher_dates/` dir) for instant/offline reads.
+- **Decoupled from deciphering.** Parsed tolerantly with no schema; a failed refresh keeps the
+  cached copy, a hash with no entry just shows no date, and older apps never fetch it.
+- **Generated, not hand-edited.** `node tests/gen-player-dates.mjs` in `zemer-app` rebuilds it from
+  this repo's git history (the first commit that introduced each hash). This repo's rotation
+  pipeline (`.github/workflows/player-monitor.yml`, "Refresh player_dates") re-runs it after every
+  config it applies (a failure there only warns; the config deploy
+  is unaffected). After adding a config by hand, run it yourself.
+
 Run the tests with `./gradlew :library:testDebugUnitTest`. The `config-parity/` fixtures are
 shared with the `zemer-app` harness: file-level accept/reject verdicts (and the n-IIFE
 template) are pinned byte-for-byte across both readers.
