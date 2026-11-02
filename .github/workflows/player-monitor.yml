@@ -84,6 +84,7 @@ jobs:
       summary: ${{ steps.scan.outputs.summary }}
       proposed: ${{ steps.propose.outputs.proposed }}
       proposed_hashes: ${{ steps.propose.outputs.proposed_hashes }}
+      blind: ${{ steps.scan.outputs.blind }}
     steps:
       - name: Checkout zemer-cipher
         uses: actions/checkout@v4
@@ -115,13 +116,19 @@ jobs:
       # ~1/6 of the time is missed ~83% of the time by a single sample and only surfaces once it has
       # already rotated in, i.e. once playback is already breaking. "Known" is decided by the
       # harness loader (the app's own validation rules) against THIS repo's config file, including
-      # md5 aliases. Non-zero exit means the committed file is itself invalid — devices would reject
-      # it wholesale, so a red run is the correct alarm for that.
+      # md5 aliases. Exit 1 means the committed file is itself invalid — devices would reject it
+      # wholesale, so a red run is the correct alarm for that. Exit 3 means a surface returned no
+      # player at all (the scan is blind there): the run carries on so unknowns found elsewhere
+      # still validate and deploy, and the `blind` job then alerts and fails the run. The scan went
+      # blind silently from 2026-10-30 (every request failed, 0 samples, "all covered", green).
       - name: Scan live players
         id: scan
         run: |
-          node harness/tests/scan-live-players.mjs "$CONFIG_PATH" 30 > /tmp/scan.json 2> /tmp/scan.log
+          RC=0
+          node harness/tests/scan-live-players.mjs "$CONFIG_PATH" 30 > /tmp/scan.json 2> /tmp/scan.log || RC=$?
           cat /tmp/scan.log
+          [ "$RC" = 0 ] || [ "$RC" = 3 ] || exit "$RC"
+          echo "blind=$(node -e "process.stdout.write((JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).blind||[]).join(' '))")" >> "$GITHUB_OUTPUT"
           # The harness counts an md5-only match as covered, but devices look a player up by its URL
           # hash only (#188). Any live hash missing from the table goes through the normal path.
           ADDED=$(node tools/url-uncovered.mjs /tmp/scan.json "$CONFIG_PATH")
@@ -302,6 +309,74 @@ jobs:
             Deploy mode:    ${{ vars.AUTO_DEPLOY_CONFIG }}
 
             Issues: https://github.com/${{ github.repository }}/issues
+
+  # A blind scan (a surface that returned no player at all) means a canary there would go unseen.
+  # Never let it pass as "all covered": one deduped issue, an email, and a red run.
+  blind:
+    needs: scan
+    if: needs.scan.outputs.blind != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    env:
+      GMAIL_USER: ${{ secrets.GMAIL_USERNAME }}
+    steps:
+      - name: Generate Zemer App token
+        id: bot
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ZEMER_APP_ID }}
+          private-key: ${{ secrets.ZEMER_APP_PRIVATE_KEY }}
+
+      - name: Open an issue for the blind scan
+        uses: actions/github-script@v7
+        env:
+          BLIND: ${{ needs.scan.outputs.blind }}
+        with:
+          github-token: ${{ steps.bot.outputs.token }}
+          script: |
+            const title = 'Player monitor is blind';
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 100,
+            });
+            if (open.some(i => i.title === title)) { console.log('Blind issue already open.'); return; }
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo, title,
+              body: [
+                `The live player scan got **no player at all** from: \`${process.env.BLIND}\`.`,
+                '',
+                'A canary served there would go unseen until it breaks playback. The scan log in the run',
+                `lists each surface's errors: ${run}`,
+                '',
+                'Reproduce locally: `node tests/scan-live-players.mjs cipher/library/src/main/assets/player_configs.json 30` (zemer-app).',
+                'Close this issue once a run is green again.',
+              ].join('\n'),
+              labels: ['player-update', 'cipher'],
+            });
+
+      - name: Send email notification
+        if: ${{ !cancelled() && env.GMAIL_USER != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "YouTube player monitor is blind"
+          to: dietdroidwp@gmail.com
+          from: Zemer CI <${{ secrets.GMAIL_USERNAME }}>
+          body: |
+            The live player scan got no player at all from: ${{ needs.scan.outputs.blind }}
+            A canary there would go unseen. Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Fail the run
+        if: ${{ !cancelled() }}
+        run: |
+          echo "::error::player scan got no player from: ${{ needs.scan.outputs.blind }}"
+          exit 1
 
   deploy:
     needs: scan
