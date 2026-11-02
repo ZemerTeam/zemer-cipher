@@ -553,6 +553,7 @@
     "4a1e575f": { "sig": "bs(8,1901,INPUT)", "nClass": "Wq", "sts": 20758, "aliases": ["62cb45e2"] },
     "e784b7f5": { "sig": "bs(8,1901,INPUT)", "nClass": "Wq", "sts": 20758 },
     "c65d4dfb": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759, "aliases": ["84006ec4"] },
-    "3a026a7c": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 }
+    "3a026a7c": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 },
+    "80cbcf8c": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 }
   }
 }
