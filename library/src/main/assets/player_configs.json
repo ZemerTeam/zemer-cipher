@@ -555,6 +555,7 @@
     "c65d4dfb": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759, "aliases": ["84006ec4"] },
     "3a026a7c": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 },
     "80cbcf8c": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 },
-    "254d69f9": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 }
+    "254d69f9": { "sig": "hr(57,7106,INPUT)", "nClass": "Eb", "sts": 20759 },
+    "9c8bc104": { "sig": "TG(57,7106,INPUT)", "nClass": "xx", "sts": 20759, "aliases": ["ac841426"] }
   }
 }
