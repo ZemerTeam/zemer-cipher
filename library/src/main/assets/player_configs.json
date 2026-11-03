@@ -559,6 +559,7 @@
     "9c8bc104": { "sig": "TG(57,7106,INPUT)", "nClass": "xx", "sts": 20759, "aliases": ["ac841426"] },
     "ef321720": { "sig": "TG(57,7106,INPUT)", "nClass": "xx", "sts": 20759 },
     "d9ba1984": { "sig": "QD(57,7106,INPUT)", "nClass": "HD", "sts": 20759, "aliases": ["40cb3334"] },
-    "d1e7acbd": { "sig": "QD(57,7106,INPUT)", "nClass": "HD", "sts": 20759 }
+    "d1e7acbd": { "sig": "QD(57,7106,INPUT)", "nClass": "HD", "sts": 20759 },
+    "d8a33f35": { "sig": "hs(18,2147,INPUT)", "nClass": "yn", "sts": 20760, "aliases": ["f1cf8a93"] }
   }
 }
