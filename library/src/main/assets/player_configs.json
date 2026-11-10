@@ -578,6 +578,7 @@
     "5895c4c4": { "sig": "Hz(11,6439,INPUT)", "nClass": "KJ", "sts": 20763 },
     "deeb37cd": { "sig": "Hz(11,6439,INPUT)", "nClass": "KJ", "sts": 20763 },
     "f70de3b8": { "sig": "Hz(11,6439,INPUT)", "nClass": "KJ", "sts": 20763 },
-    "2e891bcc": { "sig": "Hz(11,6439,INPUT)", "nClass": "KJ", "sts": 20763 }
+    "2e891bcc": { "sig": "Hz(11,6439,INPUT)", "nClass": "KJ", "sts": 20763 },
+    "6918dea5": { "sig": "KH(15,3588,INPUT)", "nClass": "Rl", "sts": 20766, "aliases": ["3a55ac2c"] }
   }
 }
