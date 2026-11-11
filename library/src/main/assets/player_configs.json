@@ -584,6 +584,7 @@
     "8b2685e5": { "sig": "ZB(67,3409,INPUT)", "nClass": "Jv", "sts": 20767, "aliases": ["e28c829a"] },
     "4655a80e": { "sig": "ZB(67,3409,INPUT)", "nClass": "Jv", "sts": 20767 },
     "d19f44f5": { "sig": "ZB(67,3409,INPUT)", "nClass": "Jv", "sts": 20767 },
-    "2e127273": { "sig": "ZB(67,3409,INPUT)", "nClass": "Jv", "sts": 20767 }
+    "2e127273": { "sig": "ZB(67,3409,INPUT)", "nClass": "Jv", "sts": 20767 },
+    "fad7e4e9": { "sig": "hj(67,3409,INPUT)", "nClass": "io", "sts": 20767, "aliases": ["b1dea243"] }
   }
 }
