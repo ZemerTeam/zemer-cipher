@@ -1,0 +1,302 @@
+{
+ "schemaVersion": 1,
+ "clients": [
+  {
+   "key": "K0",
+   "clientName": "K0",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K0"
+  },
+  {
+   "key": "K1",
+   "clientName": "K1",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K1"
+  },
+  {
+   "key": "K2",
+   "clientName": "K2",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K2"
+  },
+  {
+   "key": "K3",
+   "clientName": "K3",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K3"
+  },
+  {
+   "key": "K4",
+   "clientName": "K4",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K4"
+  },
+  {
+   "key": "K5",
+   "clientName": "K5",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K5"
+  },
+  {
+   "key": "K6",
+   "clientName": "K6",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K6"
+  },
+  {
+   "key": "K7",
+   "clientName": "K7",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K7"
+  },
+  {
+   "key": "K8",
+   "clientName": "K8",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K8"
+  },
+  {
+   "key": "K9",
+   "clientName": "K9",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K9"
+  },
+  {
+   "key": "K10",
+   "clientName": "K10",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K10"
+  },
+  {
+   "key": "K11",
+   "clientName": "K11",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K11"
+  },
+  {
+   "key": "K12",
+   "clientName": "K12",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K12"
+  },
+  {
+   "key": "K13",
+   "clientName": "K13",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K13"
+  },
+  {
+   "key": "K14",
+   "clientName": "K14",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K14"
+  },
+  {
+   "key": "K15",
+   "clientName": "K15",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K15"
+  },
+  {
+   "key": "K16",
+   "clientName": "K16",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K16"
+  },
+  {
+   "key": "K17",
+   "clientName": "K17",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K17"
+  },
+  {
+   "key": "K18",
+   "clientName": "K18",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K18"
+  },
+  {
+   "key": "K19",
+   "clientName": "K19",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K19"
+  },
+  {
+   "key": "K20",
+   "clientName": "K20",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K20"
+  },
+  {
+   "key": "K21",
+   "clientName": "K21",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K21"
+  },
+  {
+   "key": "K22",
+   "clientName": "K22",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K22"
+  },
+  {
+   "key": "K23",
+   "clientName": "K23",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K23"
+  },
+  {
+   "key": "K24",
+   "clientName": "K24",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K24"
+  },
+  {
+   "key": "K25",
+   "clientName": "K25",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K25"
+  },
+  {
+   "key": "K26",
+   "clientName": "K26",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K26"
+  },
+  {
+   "key": "K27",
+   "clientName": "K27",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K27"
+  },
+  {
+   "key": "K28",
+   "clientName": "K28",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K28"
+  },
+  {
+   "key": "K29",
+   "clientName": "K29",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K29"
+  },
+  {
+   "key": "K30",
+   "clientName": "K30",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K30"
+  },
+  {
+   "key": "K31",
+   "clientName": "K31",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K31"
+  },
+  {
+   "key": "K32",
+   "clientName": "K32",
+   "clientVersion": "1.0",
+   "clientId": "1",
+   "userAgent": "Mozilla/5.0 (test)",
+   "protocol": "direct",
+   "family": "K32"
+  }
+ ]
+}
