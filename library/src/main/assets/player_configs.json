@@ -602,6 +602,7 @@
     "d97ef12a": { "sig": "xr(18,5414,INPUT)", "nClass": "Zp", "sts": 20769, "aliases": ["0e95f632"] },
     "7de1ce24": { "sig": "vb(18,5414,INPUT)", "nClass": "zi", "sts": 20769, "aliases": ["d881545b"] },
     "9b8de133": { "sig": "Ro(5,5087,INPUT)", "nClass": "Wg", "sts": 20770, "aliases": ["f0bff6bd"] },
-    "0bed3ccd": { "sig": "md(5,5087,INPUT)", "nClass": "ld", "sts": 20770, "aliases": ["b91c2e34"] }
+    "0bed3ccd": { "sig": "md(5,5087,INPUT)", "nClass": "ld", "sts": 20770, "aliases": ["b91c2e34"] },
+    "e0795400": { "sig": "md(5,5087,INPUT)", "nClass": "ld", "sts": 20770 }
   }
 }
