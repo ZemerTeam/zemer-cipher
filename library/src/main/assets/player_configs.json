@@ -606,6 +606,7 @@
     "e0795400": { "sig": "md(5,5087,INPUT)", "nClass": "ld", "sts": 20770 },
     "8cd7dd12": { "sig": "Go(5,5087,INPUT)", "nClass": "Rs", "sts": 20770, "aliases": ["cd1bd289"] },
     "b559f50c": { "sig": "Go(5,5087,INPUT)", "nClass": "Rs", "sts": 20770 },
-    "f9c6b6bd": { "sig": "Go(5,5087,INPUT)", "nClass": "Rs", "sts": 20770 }
+    "f9c6b6bd": { "sig": "Go(5,5087,INPUT)", "nClass": "Rs", "sts": 20770 },
+    "907ce1cd": { "sig": "Pl(16,2515,INPUT)", "nClass": "Ol", "sts": 20772, "aliases": ["64a89e1b"] }
   }
 }
