@@ -609,6 +609,7 @@
     "f9c6b6bd": { "sig": "Go(5,5087,INPUT)", "nClass": "Rs", "sts": 20770 },
     "907ce1cd": { "sig": "Pl(16,2515,INPUT)", "nClass": "Ol", "sts": 20772, "aliases": ["64a89e1b"] },
     "6bde03ef": { "sig": "Uj(33,6730,INPUT)", "nClass": "Tj", "sts": 20773, "aliases": ["8c82c301"] },
-    "248d5afd": { "sig": "Uj(33,6730,INPUT)", "nClass": "Tj", "sts": 20773 }
+    "248d5afd": { "sig": "Uj(33,6730,INPUT)", "nClass": "Tj", "sts": 20773 },
+    "c310a3b4": { "sig": "BH(33,6730,INPUT)", "nClass": "ce", "sts": 20773, "aliases": ["dafc92c2"] }
   }
 }
