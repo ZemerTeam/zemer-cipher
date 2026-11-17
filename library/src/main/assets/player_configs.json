@@ -613,6 +613,7 @@
     "c310a3b4": { "sig": "BH(33,6730,INPUT)", "nClass": "ce", "sts": 20773, "aliases": ["dafc92c2"] },
     "f30b036b": { "sig": "Qc(33,6730,INPUT)", "nClass": "Kl", "sts": 20773, "aliases": ["e4fcbbe6"] },
     "983e9c18": { "sig": "Yx(33,6730,INPUT)", "nClass": "Xx", "sts": 20773, "aliases": ["dc604f01"] },
-    "5835e72d": { "sig": "Yx(33,6730,INPUT)", "nClass": "Xx", "sts": 20773 }
+    "5835e72d": { "sig": "Yx(33,6730,INPUT)", "nClass": "Xx", "sts": 20773 },
+    "53caf627": { "sig": "$h(33,6730,INPUT)", "nClass": "Zh", "sts": 20773, "aliases": ["350b473d"] }
   }
 }
