@@ -618,6 +618,7 @@
     "399658b3": { "sig": "xl(19,3722,INPUT)", "nClass": "uk", "sts": 20774, "aliases": ["b09c8027"] },
     "4d18aae2": { "sig": "xl(19,3722,INPUT)", "nClass": "uk", "sts": 20774 },
     "bbf30bc2": { "sig": "xl(19,3722,INPUT)", "nClass": "uk", "sts": 20774 },
-    "b3284821": { "sig": "im(19,3722,INPUT)", "nClass": "hm", "sts": 20774, "aliases": ["93447176"] }
+    "b3284821": { "sig": "im(19,3722,INPUT)", "nClass": "hm", "sts": 20774, "aliases": ["93447176"] },
+    "6b3d0364": { "sig": "im(19,3722,INPUT)", "nClass": "hm", "sts": 20774 }
   }
 }
