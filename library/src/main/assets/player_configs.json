@@ -620,6 +620,7 @@
     "bbf30bc2": { "sig": "xl(19,3722,INPUT)", "nClass": "uk", "sts": 20774 },
     "b3284821": { "sig": "im(19,3722,INPUT)", "nClass": "hm", "sts": 20774, "aliases": ["93447176"] },
     "6b3d0364": { "sig": "im(19,3722,INPUT)", "nClass": "hm", "sts": 20774 },
-    "0a13a6b5": { "sig": "im(19,3722,INPUT)", "nClass": "hm", "sts": 20774 }
+    "0a13a6b5": { "sig": "im(19,3722,INPUT)", "nClass": "hm", "sts": 20774 },
+    "f4280e43": { "sig": "Od(19,3722,INPUT)", "nClass": "Nd", "sts": 20774, "aliases": ["6610c732"] }
   }
 }
