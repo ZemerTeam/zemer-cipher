@@ -630,6 +630,7 @@
     "5ba500a8": { "sig": "Hp(2,1724,INPUT)", "nClass": "Cp", "sts": 20775 },
     "4a6dfefc": { "sig": "Vx(49,8822,INPUT)", "nClass": "OC", "sts": 20776, "aliases": ["39082609"] },
     "5ead9320": { "sig": "Vx(49,8822,INPUT)", "nClass": "OC", "sts": 20776 },
-    "9a169269": { "sig": "Vx(49,8822,INPUT)", "nClass": "OC", "sts": 20776 }
+    "9a169269": { "sig": "Vx(49,8822,INPUT)", "nClass": "OC", "sts": 20776 },
+    "afdf03ae": { "sig": "Ab(49,8822,INPUT)", "nClass": "zb", "sts": 20776, "aliases": ["e10989d8"] }
   }
 }
