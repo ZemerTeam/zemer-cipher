@@ -643,6 +643,7 @@
     "b485e332": { "sig": "Yo(2,7910,INPUT)", "nClass": "Xo", "sts": 20779, "aliases": ["fe40e19e"] },
     "b17b74e6": { "sig": "Ic(18,7746,INPUT)", "nClass": "aq", "sts": 20780, "aliases": ["e2bbe1e1"] },
     "92eef845": { "sig": "RA(18,7746,INPUT)", "nClass": "ed", "sts": 20780, "aliases": ["6710872b"] },
-    "4ee2dbc0": { "sig": "RA(18,7746,INPUT)", "nClass": "ed", "sts": 20780 }
+    "4ee2dbc0": { "sig": "RA(18,7746,INPUT)", "nClass": "ed", "sts": 20780 },
+    "2e38c6fe": { "sig": "Wq(18,7746,INPUT)", "nClass": "Lq", "sts": 20780, "aliases": ["36be8478"] }
   }
 }
