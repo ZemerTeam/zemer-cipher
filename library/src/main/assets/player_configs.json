@@ -654,6 +654,7 @@
     "559b6b76": { "sig": "Zd(18,7746,INPUT)", "nClass": "Tb", "sts": 20780, "aliases": ["70d8eb43"] },
     "e671247a": { "sig": "dn(18,7746,INPUT)", "nClass": "Bp", "sts": 20780 },
     "f40426d4": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780, "aliases": ["eee87f91"] },
-    "c37d5647": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780 }
+    "c37d5647": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780 },
+    "e5835c8a": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780, "aliases": ["d7694e54"] }
   }
 }
