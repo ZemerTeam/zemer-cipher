@@ -655,6 +655,7 @@
     "e671247a": { "sig": "dn(18,7746,INPUT)", "nClass": "Bp", "sts": 20780 },
     "f40426d4": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780, "aliases": ["eee87f91"] },
     "c37d5647": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780 },
-    "e5835c8a": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780, "aliases": ["d7694e54"] }
+    "e5835c8a": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780, "aliases": ["d7694e54"] },
+    "9244921b": { "sig": "od(18,7746,INPUT)", "nClass": "nd", "sts": 20780, "aliases": ["de68a001"] }
   }
 }
